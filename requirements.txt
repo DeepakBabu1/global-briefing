@@ -1,0 +1,8 @@
+# The Global Briefing - Airflow Dependencies
+apache-airflow==2.7.2
+newspaper3k==0.2.8
+lxml_html_clean==0.1.0
+psycopg2-binary==2.9.7
+groq==0.4.1
+requests==2.31.0
+python-dotenv==1.0.0

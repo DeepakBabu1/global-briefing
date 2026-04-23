@@ -1,0 +1,130 @@
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:13
+    container_name: global-briefing-postgres
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - POSTGRES_DB=${POSTGRES_DB:-postgres}
+    ports:
+      - "${POSTGRES_EXTERNAL_PORT:-5433}:5432"
+    volumes:
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - global-briefing-network
+
+  # Redis for caching
+  redis:
+    image: redis:7-alpine
+    container_name: global-briefing-redis
+    ports:
+      - "6379:6379"
+    networks:
+      - global-briefing-network
+
+  # Airflow Webserver & Scheduler
+  webserver:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: global-briefing-airflow
+    depends_on:
+      - postgres
+      - redis
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__CORE__SQL_ALCHEMY_CONN=postgresql+psycopg2://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres/${POSTGRES_DB:-postgres}
+      - AIRFLOW__CORE__FERNET_KEY=${FERNET_KEY:-dGVzdF9rZXlfZm9yX2RldmVsb3BtZW50}
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+      - AIRFLOW__WEBSERVER__WORKERS=2
+      - AIRFLOW__WEBSERVER__SECRET_KEY=${AIRFLOW_SECRET_KEY:-test_secret_key_for_development}
+      - AIRFLOW__WEBSERVER__BASE_URL=http://localhost:8081 
+      - AIRFLOW__LOGGING__REMOTE_LOGGING=False
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-postgres}
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./include:/opt/airflow/include
+      - airflow_logs:/opt/airflow/logs
+    ports:
+      - "${AIRFLOW_PORT:-8081}:8080"
+    networks:
+      - global-briefing-network
+    command: bash -c "airflow db migrate && airflow users create --username admin --firstname admin --lastname admin --role Admin --email admin@example.com --password admin || true && (airflow scheduler & airflow webserver)"
+    restart: unless-stopped
+
+  # FastAPI Backend
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: global-briefing-backend
+    depends_on:
+      - postgres
+      - redis
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-postgres}
+      - REDIS_URL=redis://redis:6379
+      - JWT_SECRET=${JWT_SECRET}
+      - GROQ_API_KEY=${GROQ_API_KEY}
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./backend:/app
+    networks:
+      - global-briefing-network
+    restart: unless-stopped
+
+  # React Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: global-briefing-frontend
+    depends_on:
+      - backend
+    environment:
+      - REACT_APP_API_URL=http://localhost:5000
+      - REACT_APP_WS_URL=ws://localhost:5000
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    networks:
+      - global-briefing-network
+    restart: unless-stopped
+
+  # Nginx Reverse Proxy (Optional for production)
+  nginx:
+    image: nginx:alpine
+    container_name: global-briefing-nginx
+    depends_on:
+      - frontend
+      - backend
+      - webserver
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+      - ./nginx/ssl:/etc/nginx/ssl
+    networks:
+      - global-briefing-network
+    profiles:
+      - production
+
+volumes:
+  postgres_data:
+  airflow_logs:
+
+networks:
+  global-briefing-network:
+    driver: bridge

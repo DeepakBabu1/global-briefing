@@ -1,0 +1,78 @@
+# ── Secrets & Environment Variables ──────────────────────────────────────────
+# NEVER commit real API keys or passwords
+.env
+.env.local
+.env.*.local
+backend/.env
+frontend/.env
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+*.egg
+dist/
+build/
+.venv/
+venv/
+env/
+.pytest_cache/
+
+# ── Node / React ──────────────────────────────────────────────────────────────
+node_modules/
+frontend/node_modules/
+frontend/build/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm
+.eslintcache
+
+# ── Data Files (local exports — not for version control) ──────────────────────
+*.csv
+*.json.bak
+
+# ── Backup / Temp Files ───────────────────────────────────────────────────────
+*.backup
+*.bak
+*.tmp
+*.swp
+*~
+
+# ── macOS ─────────────────────────────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# ── Windows ───────────────────────────────────────────────────────────────────
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ── Airflow ───────────────────────────────────────────────────────────────────
+airflow_settings.yaml
+airflow-webserver.pid
+webserver_config.py
+airflow.cfg
+airflow.db
+logs/
+
+# ── Astronomer CLI ────────────────────────────────────────────────────────────
+.astro/
+
+# ── Editor / Tool Config ──────────────────────────────────────────────────────
+.claude/
+.vscode/
+.idea/
+
+# ── Database snapshots ────────────────────────────────────────────────────────
+*.sqlite
+*.db
+
+# ── Docker local overrides ────────────────────────────────────────────────────
+docker-compose.override.yml
+
+# ── Logs ─────────────────────────────────────────────────────────────────────
+*.log
