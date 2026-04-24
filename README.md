@@ -1,6 +1,6 @@
 # The Global Briefing
 
-A personalised news platform built with Airflow, FastAPI, and React. It pulls articles from NewsAPI, summarises them using Qwen 3 32B (via Groq), and presents them as a clean news feed tailored to each user's interests — all running locally in Docker.
+A personalised news platform built with Airflow, FastAPI, and React. It pulls articles from NewsAPI, summarises them using Qwen 3-32B (via Groq), and presents them as a clean news feed tailored to each user's interests.
 
 ---
 
@@ -22,9 +22,9 @@ flowchart TD
     F --> J
 ```
 
-**Request flow in plain english:**
+**Request flow:**
 1. Airflow wakes up on a schedule and calls NewsAPI for fresh articles
-2. Each article body is sent to Groq — Qwen 3 32B writes a summary with a lead paragraph and Fast Facts
+2. Each article body is sent to Groq — Qwen 3-32B writes a summary with a lead paragraph and Fast Facts
 3. The summary lands in PostgreSQL
 4. When the React app requests stories, FastAPI checks Redis first — if cached, it skips the DB call
 5. The user sees a personalised feed based on their saved topic preferences
