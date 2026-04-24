@@ -86,7 +86,6 @@ Project_newsletter/
 ### What you need
 
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/) — must be running before you do anything else
-- [Git](https://git-scm.com/)
 - A Groq API key — free at [console.groq.com](https://console.groq.com)
 - A NewsAPI key — free at [newsapi.org](https://newsapi.org)
 
