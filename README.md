@@ -36,7 +36,7 @@ flowchart TD
 | What | How |
 |---|---|
 | Orchestration | Apache Airflow |
-| AI model | Qwen 3 32B via Groq API |
+| AI model | Qwen 3-32B via Groq API |
 | Backend | FastAPI + Uvicorn |
 | Frontend | React + Tailwind CSS |
 | Database | PostgreSQL 13 |
