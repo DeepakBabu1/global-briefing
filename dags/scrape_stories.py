@@ -9,13 +9,13 @@ import hashlib
 import psycopg2
 from datetime import date
 
-GROQ_API_KEY       = os.getenv('GROQ_API_KEY', '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')
-NEWSAPI_KEY        = os.getenv('NEWSAPI_KEY','3fa13ff5a1cd4467bc13797c70eceace')  # Set in .env — never hardcode
+GROQ_API_KEY       = os.getenv('GROQ_API_KEY', '')
+NEWSAPI_KEY        = os.getenv('NEWSAPI_KEY','')  # Set in .env — never hardcode
 POSTGRES_HOST      = os.getenv('POSTGRES_HOST', 'postgres')
 POSTGRES_PORT      = os.getenv('POSTGRES_PORT', '5432')
 POSTGRES_DB        = os.getenv('POSTGRES_DB', 'postgres')
 POSTGRES_USER      = os.getenv('POSTGRES_USER', 'postgres')
-POSTGRES_PASSWORD  = os.getenv('POSTGRES_PASSWORD', 'postgres')
+POSTGRES_PASSWORD  = os.getenv('POSTGRES_PASSWORD', '')
 
 # Change this to any date you want. Revert to dynamic when done:
 # TARGET_DATE = "{{ ds }}"  (Airflow template for daily runs)
