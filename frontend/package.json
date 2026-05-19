@@ -4,7 +4,7 @@
   "description": "The Global Briefing Newsletter Frontend",
   "main": "index.js",
   "homepage": ".",
-  "proxy": "http://localhost:8000",
+  "proxy": "http://backend:5000",
   "scripts": {
     "start": "react-scripts start",
     "build": "react-scripts build",

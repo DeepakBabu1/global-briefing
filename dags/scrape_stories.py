@@ -7,9 +7,10 @@ import os
 import re
 import hashlib
 import psycopg2
+from datetime import date
 
-GROQ_API_KEY       = os.getenv('GROQ_API_KEY', '')
-NEWSAPI_KEY        = os.getenv('NEWSAPI_KEY')  # Set in .env — never hardcode
+GROQ_API_KEY       = os.getenv('GROQ_API_KEY', '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')
+NEWSAPI_KEY        = os.getenv('NEWSAPI_KEY','3fa13ff5a1cd4467bc13797c70eceace')  # Set in .env — never hardcode
 POSTGRES_HOST      = os.getenv('POSTGRES_HOST', 'postgres')
 POSTGRES_PORT      = os.getenv('POSTGRES_PORT', '5432')
 POSTGRES_DB        = os.getenv('POSTGRES_DB', 'postgres')
@@ -18,7 +19,8 @@ POSTGRES_PASSWORD  = os.getenv('POSTGRES_PASSWORD', 'postgres')
 
 # Change this to any date you want. Revert to dynamic when done:
 # TARGET_DATE = "{{ ds }}"  (Airflow template for daily runs)
-TARGET_DATE = "2026-04-12"   # ← HARDCODED: April 12
+START_DATE = "2026-04-15"
+END_DATE = date.today().strftime("%Y-%m-%d")
 
 CATEGORY_QUERIES = {
     'Technology':   'technology OR AI OR software OR Apple OR Google',
@@ -38,6 +40,7 @@ with DAG(
     start_date=datetime(2026, 1, 1),
     catchup=False,
     max_active_runs=1,
+    dagrun_timeout=timedelta(hours=2),
 ) as dag:
 
     @task(retries=3, retry_delay=timedelta(minutes=5))
@@ -64,11 +67,11 @@ with DAG(
                     'https://newsapi.org/v2/everything',
                     params={
                         'q':          query,
-                        'from':       TARGET_DATE,
-                        'to':         TARGET_DATE,
+                        'from':       START_DATE,
+                        'to':         END_DATE,
                         'language':   'en',
                         'sortBy':     'relevancy',
-                        'pageSize':   20,         # max per request on free tier
+                        'pageSize':   100,        # increased for date range
                         'apiKey':     NEWSAPI_KEY,
                     },
                     timeout=15,
@@ -153,64 +156,35 @@ with DAG(
         return all_stories
 
 
-    @task(execution_timeout=timedelta(hours=2))
-    def generate_summaries(stories):
+    @task(retries=2, retry_delay=timedelta(minutes=2), 
+          execution_timeout=timedelta(hours=2))
+    def generate_and_save(stories):
+        """Process and save stories in small batches to avoid timeout."""
         from groq import Groq
         import time
         import re
 
-        # 1. Define helper function ONCE at the top
-        def clean_summary(text):
-            # Remove DeepSeek/Qwen </think> tags if present
-            text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
-            # Remove any label lines the model might still output (including bold variations)
-            label_patterns = [
-                r'^(\*\*)?PART\s*\d+\s*[—\-:]+\s*\*?',
-                r'^(\*\*)?HEADLINE\s*:?\s*\*?',
-                r'^(\*\*)?BODY\s*:?\s*\*?',
-                r'^(\*\*)?SECTION\s*\d*\s*:?\s*\*?',
-                r'^(\*\*)?SUMMARY\s*:?\s*\*?',
-                r'^(\*\*)?KEY POINTS\s*:?\s*\*?',
-                r'^(\*\*)?BULLET LIST\s*:?\s*\*?',
-            ]
-            
-            lines = text.split('\n')
-            cleaned = []
-            fast_facts_added = False
-            
-            for line in lines:
-                stripped = line.strip()
-                
-                # Check if this is a Fast Facts line
-                if stripped.lower() == 'fast facts':
-                    if not fast_facts_added:
-                        cleaned.append(stripped)
-                        fast_facts_added = True
-                    continue
-                
-                # Remove label patterns
-                for pattern in label_patterns:
-                    stripped = re.sub(pattern, '', stripped, flags=re.IGNORECASE).strip()
-                
-                # Only add non-empty lines
-                if stripped:
-                    cleaned.append(stripped)
-            
-            return '\n'.join(cleaned).strip()
-
         client = Groq(api_key=GROQ_API_KEY)
-        summarized = []
         request_count = 0
+        saved = 0
+
+        # ── DB connection ──
+        conn = psycopg2.connect(
+            host=POSTGRES_HOST, database=POSTGRES_DB,
+            user=POSTGRES_USER, password=POSTGRES_PASSWORD,
+            port=POSTGRES_PORT,
+        )
+        cursor = conn.cursor()
 
         for story in stories:
             max_retries = 5
-            
+
             for attempt in range(max_retries):
                 try:
                     content_word_count = len(story['content'].split())
-                    target_min = int(content_word_count * 0.5) 
+                    target_min = int(content_word_count * 0.5)
                     target_max = int(content_word_count * 0.6)
-                    
+
                     prompt = f"""
                     You are the lead writer for The Global Briefing, a premium daily newsletter in the style of Morning Brew and The Economist. Your writing is sharp, specific, and never vague.
 
@@ -241,109 +215,84 @@ with DAG(
                     - [fact 5]
                     - [fact 6]
 
+                    FAST FACTS RULES — this is critical:
+                    - Each fact must be a SPECIFIC DATA POINT: a number, percentage, price, date, score, ranking, or named statistic directly from the source
+                    - BAD example: "Stamford Bridge is home to Chelsea" — this is common knowledge, not a data point
+                    - BAD example: "Pep Guardiola is the manager of Manchester City" — everyone knows this
+                    - GOOD example: "Manchester City sits 9 points behind Arsenal with 8 games remaining"
+                    - GOOD example: "Chelsea's last 4 Premier League games before the FA Cup were all defeats"
+                    - GOOD example: "Alatriste's rent rose from $2,200 to $3,750 — a 73% increase over 5 years"
+                    - Each fact must contain at least one specific number, date, price, or named statistic
+                    - Never state something that is common knowledge or easily guessed
+                    - Never repeat a fact already used in the paragraphs above
+
                     STRICT RULES:
                     - Use **bold** for every proper noun, number, date, organization, location, and key technical term on first mention
                     - Every single sentence must contain at least one specific fact, name, number, or date from the source — no filler sentences allowed
-                    - Fast Facts must each be one concise sentence starting with a bold term
                     - Never write: HEADLINE, BODY, SECTION, SUMMARY, KEY POINTS, PART, [LINE 1], [PARAGRAPHS], or any structural label
                     - No markdown except bold and bullet dashes (-)
                     - Do not invent facts, quotes, statistics, or names not present in the source
                     - Target word count: {target_min} to {target_max} words total
                     - Write in present tense where possible for immediacy
                     - Tone: authoritative but accessible — smart without being academic"""
-                    
                     response = client.chat.completions.create(
-                        model='qwen/qwen3-32b',
+                        model='llama-3.3-70b-versatile',
                         messages=[{'role': 'user', 'content': prompt}],
-                        max_tokens=1500
+                        max_tokens=2000
                     )
 
-                    # Get raw text from API
-                    raw_api_text = response.choices[0].message.content.strip()
-                    
-                    # Use raw API output directly
-                    story['summary'] = raw_api_text
+                    raw = response.choices[0].message.content.strip()
+                    story['summary'] = re.sub(r'<think>.*?</think>', '', raw, flags=re.DOTALL).strip()
 
                     request_count += 1
                     print(f"[{request_count}/{len(stories)}] Summarized: {story['title'][:50]}")
 
-                    # ── Throttle: pause every 5 requests ──
+                    # ── Save immediately after each summary ──
+                    try:
+                        cursor.execute("""
+                            INSERT INTO stories (
+                                story_id, title, url, content, summary,
+                                cover_image, author, category, source,
+                                published_at, fetched_at
+                            )
+                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                            ON CONFLICT (story_id) DO UPDATE SET
+                                summary    = EXCLUDED.summary,
+                                fetched_at = EXCLUDED.fetched_at;
+                        """, (
+                            story['story_id'], story['title'], story['url'],
+                            story['content'], story['summary'], story['cover_image'],
+                            story['author'], story['category'], story['source'],
+                            story['published_at'], story['fetched_at'],
+                        ))
+                        conn.commit()
+                        saved += 1
+                        print(f"  ✓ Saved: {story['title'][:50]}")
+                    except Exception as db_err:
+                        conn.rollback()
+                        print(f"  DB error: {db_err}")
+
+                    # ── Throttle ──
                     if request_count % 5 == 0:
-                        print("Throttling — waiting 90s to stay under rate limit...")
+                        print("Throttling — waiting 90s...")
                         time.sleep(90)
                     else:
                         time.sleep(20)
 
-                    break  # success, exit retry loop
+                    break  # success
 
                 except Exception as e:
                     error_msg = str(e).lower()
                     if 'rate_limit' in error_msg or '429' in error_msg:
                         wait_time = 30 * (2 ** attempt)
-                        print(f"  ⚠ Rate limited on attempt {attempt+1}. Waiting {wait_time}s...")
+                        print(f"  ⚠ Rate limited. Waiting {wait_time}s...")
                         time.sleep(wait_time)
-                        continue 
-                    
-                    print(f"  ✗ Groq error on '{story['title'][:40]}': {e}")
-                    story['summary'] = ''
+                        continue
+                    print(f"  ✗ Error: {e}")
                     break
-
-            if not story.get('summary'):
-                story['summary'] = ''
-
-            summarized.append(story)
-
-        print(f"\nDone. Summarized {sum(1 for s in summarized if s['summary'])} / {len(stories)} stories.")
-        return summarized
-
-
-    @task(retries=2, retry_delay=timedelta(minutes=2))
-    def save_to_postgres(stories):
-        conn = psycopg2.connect(
-            host=POSTGRES_HOST,
-            database=POSTGRES_DB,
-            user=POSTGRES_USER,
-            password=POSTGRES_PASSWORD,
-            port=POSTGRES_PORT,
-        )
-        cursor = conn.cursor()
-        saved = 0
-        skipped = 0
-
-        for story in stories:
-            if not story.get('summary'):
-                skipped += 1
-                continue
-
-            try:
-                cursor.execute("""
-                    INSERT INTO stories (
-                        story_id, title, url, content, summary,
-                        cover_image, author, category, source,
-                        published_at, fetched_at
-                    )
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                    ON CONFLICT (story_id) DO UPDATE SET
-                        summary    = EXCLUDED.summary,
-                        fetched_at = EXCLUDED.fetched_at;
-                """, (
-                    story['story_id'],    story['title'],
-                    story['url'],         story['content'],
-                    story['summary'],     story['cover_image'],
-                    story['author'],      story['category'],
-                    story['source'],      story['published_at'],
-                    story['fetched_at'],
-                ))
-                conn.commit()
-                saved += 1
-            except Exception as e:
-                conn.rollback()
-                print(f"  DB error for '{story['title'][:60]}': {e}")
 
         cursor.close()
         conn.close()
-        print(f"\nSaved: {saved} | Skipped (no summary): {skipped}")
-
-    stories    = fetch_from_newsapi()
-    summarized = generate_summaries(stories)
-    save_to_postgres(summarized)
+        print(f"\nDone. Saved {saved} / {len(stories)} stories.")
+    stories = fetch_from_newsapi()
+    generate_and_save(stories)

@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useContext } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate, Link, useNavigate, useParams } from 'react-router-dom';
-import { Search, Calendar, TrendingUp, Library, LogOut, Mail, Lock, User, Heart, Bookmark, ArrowUpRight } from 'lucide-react';
+import React, { useState, useEffect, useContext, useRef, useMemo } from 'react';
+import { BrowserRouter as Router, Routes, Route, Navigate, Link, useNavigate, useParams, useLocation } from 'react-router-dom';
+import { Search, Calendar, TrendingUp, Library, LogOut, Mail, Lock, User, Heart, Bookmark, ArrowUpRight, Share, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
 import validator from 'validator';
@@ -547,7 +547,7 @@ function Navigation({ currentPage, onCategoryChange, selectedCategory, onSearchC
             <input 
               className="search-bar-input"
               type="text"
-              placeholder="Search the briefing..."
+              placeholder="Search stories..."
               autoComplete="off"
               spellCheck="false"
               value={searchQuery}
@@ -560,28 +560,6 @@ function Navigation({ currentPage, onCategoryChange, selectedCategory, onSearchC
         <div className="header-right">
           {user ? (
             <>
-              <div className="date-picker-container">
-                <Calendar className="date-picker-icon" />
-                <button 
-                  className="date-picker-input"
-                  onClick={handleDateClick}
-                >
-                  {formatDate(currentDate)}
-                </button>
-                {showDatePicker && (
-                  <DatePicker
-                    selectedDate={currentDate}
-                    onDateSelect={handleDateSelect}
-                    onClose={() => setShowDatePicker(false)}
-                  />
-                )}
-              </div>
-              {user && userPreferences && userPreferences.length > 0 && (
-                <button className="daily-drop-link" onClick={handleDailyDropClick}>
-                  <span className="status-dot"></span>
-                  Daily Drop Active
-                </button>
-              )}
               <Link to="/insights" className={`nav-link ${currentPage === 'insights' ? 'active' : ''}`}>
                 Insights
               </Link>
@@ -600,23 +578,42 @@ function Navigation({ currentPage, onCategoryChange, selectedCategory, onSearchC
           )}
         </div>
       </header>
-
-      <PreferencesManagerModal 
-        isOpen={showPreferencesModal}
-        onClose={() => setShowPreferencesModal(false)}
-      />
     </>
   );
 }
 
 function HomePage() {
   const { user, loading } = useAuth();
+  const location = useLocation();
+  const dateInputRef = useRef(null);
   const [stories, setStories] = useState([]);
   const [selectedCategory, setSelectedCategory] = useState("All");
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedDate, setSelectedDate] = useState('');
+  const [selectedDate, setSelectedDate] = useState(null);
   const [storiesLoading, setStoriesLoading] = useState(true);
   const [userPreferences, setUserPreferences] = useState([]);
+  
+  // useMemo must be called unconditionally at component top
+  const displayedStories = useMemo(() => {
+    let result = stories  // start with ALL stories
+    
+    // Only filter by date if user selected one
+    if (selectedDate) {
+      result = result.filter(s => 
+        s.published_at && s.published_at.startsWith(selectedDate)
+      )
+    }
+    
+    // Only filter by category if not 'All'
+    if (selectedCategory && selectedCategory !== 'All') {
+      result = result.filter(s =>
+        s.category && 
+        s.category.toLowerCase() === selectedCategory.toLowerCase()
+      )
+    }
+    
+    return result
+  }, [stories, selectedDate, selectedCategory]);
 
   console.log('HomePage - User state:', user);
 
@@ -627,12 +624,31 @@ function HomePage() {
   }, [user]);
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      fetchStories();
-    }, 300);
+    setStoriesLoading(true)
+    
+    const url = selectedDate
+      ? `/api/stories?date=${selectedDate}` 
+      : '/api/stories'
+    
+    fetch(url)
+      .then(res => res.json())
+      .then(data => {
+        const allStories = Array.isArray(data) ? data : 
+                           data.stories || []
+        setStories(allStories)
+        setStoriesLoading(false)
+      })
+      .catch(err => {
+        console.error('Stories fetch error:', err)
+        setStories([])
+        setStoriesLoading(false)
+      })
+  }, [selectedDate]);
 
-    return () => clearTimeout(timer);
-  }, [selectedCategory, searchQuery, selectedDate, user]);
+  useEffect(() => {
+    const timeout = setTimeout(() => setStoriesLoading(false), 8000)
+    return () => clearTimeout(timeout)
+  }, [])
 
   const fetchUserPreferences = async () => {
     try {
@@ -658,42 +674,32 @@ function HomePage() {
       
       // Build query parameters
       const params = new URLSearchParams();
-      
-      // When search is active, ignore category and date filters
-      if (!searchQuery.trim()) {
-        if (selectedCategory !== 'All') {
-          params.append('category', selectedCategory);
-        }
-        
-        if (selectedDate) {
-          params.append('date', selectedDate);
-          console.log('DEBUG: Selected date for filtering:', selectedDate);
-        }
+      if (selectedCategory && selectedCategory !== "All") {
+        params.append('category', selectedCategory);
       }
-      
       if (searchQuery.trim()) {
-        params.append('search', searchQuery.trim());
-        console.log('DEBUG: Searching for:', searchQuery.trim());
+        params.append('search', searchQuery);
+      }
+      if (selectedDate) {
+        params.append('date', selectedDate);
       }
       
-      // Remove aggressive filtering for 'All' category - fetch all stories
-      // Only add user_id filter if user has preferences and explicitly wants personalized content
-      // if (user && userPreferences.length > 0 && selectedCategory === 'All' && !searchQuery && !selectedDate) {
-      //   params.append('user_id', user.id);
-      // }
-      
-      const url = `${API_BASE_URL}/api/stories${params.toString() ? '?' + params.toString() : ''}`;
+      const url = selectedDate 
+      ? `${API_BASE_URL}/api/stories?${params.toString()}` 
+      : `${API_BASE_URL}/api/stories`;
       
       console.log('DEBUG: API URL:', url);
       const response = await fetch(url, { headers });
       console.log('DEBUG: Response status:', response.status);
       const data = await response.json();
       console.log('DEBUG: Stories received:', data);
+      console.log('DEBUG: selectedDate state:', selectedDate);
+      console.log('DEBUG: API URL called:', url);
       
       // Log article date fields for debugging
       if (Array.isArray(data) && data.length > 0) {
         console.log('DEBUG: Sample article date fields:');
-        data.slice(0, 3).forEach((article, index) => {
+        data.slice(0, 3).forEach((Article, index) => {
           console.log(`Article ${index + 1}:`, {
             id: article.story_id,
             title: article.title?.substring(0, 50) + '...',
@@ -713,6 +719,14 @@ function HomePage() {
     } finally {
       setStoriesLoading(false);
     }
+  };
+
+  const handleUpdateStory = (storyId, updates) => {
+    setStories(prev => prev.map(story => 
+      story.story_id === storyId 
+        ? { ...story, ...updates }
+        : story
+    ));
   };
 
   const handleCategoryChange = (category) => {
@@ -740,28 +754,133 @@ function HomePage() {
         selectedCategory={selectedCategory}
         onSearchChange={handleSearchChange}
         onDateChange={handleDateChange}
-        selectedDate={selectedDate}
+        selectedDate=""
         userPreferences={userPreferences}
         onSearchTrigger={fetchStories}
       />
+      
+      {/* Morning Brew Style Blue Hero Banner - Only on Homepage */}
+      {location.pathname === '/' && (
+        <div className="hero-banner-blue">
+          <div className="hero-content-blue">
+            <div className="hero-left-blue">
+              <h2 className="hero-heading-blue">Stay informed in 5 minutes</h2>
+              <p className="hero-subtitle-blue">The Global Briefing delivers sharp, AI-curated news across 8 categories every morning.</p>
+            </div>
+            <div className="hero-right-blue">
+              <div className="hero-date-large">FRIDAY</div>
+              <div className="hero-date-small">May 9, 2026</div>
+            </div>
+          </div>
+        </div>
+      )}
       <CategoryBar selectedCategory={selectedCategory} onCategoryChange={handleCategoryChange} />
+      
+      {/* Date Picker */}
+      <div className="date-picker-container">
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span style={{ 
+            fontSize: '15px', 
+            fontWeight: '600', 
+            color: '#111827' 
+          }}>
+            {selectedDate 
+              ? `Viewing: ${new Date(selectedDate + 'T00:00:00').toLocaleDateString('en-US', { 
+                  month: 'long', 
+                  day: 'numeric', 
+                  year: 'numeric' 
+                })}`
+              : 'All Stories'}
+          </span>
+          
+          {selectedDate && (
+            <button
+              onClick={() => setSelectedDate(null)}
+              style={{
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
+                color: '#9CA3AF',
+                fontSize: '20px',
+                lineHeight: 1,
+                padding: '0 4px'
+              }}
+            >×</button>
+          )}
+        </div>
+        
+        <div style={{ position: 'relative', display: 'inline-block' }}>
+          <input
+            ref={dateInputRef}
+            type="date"
+            value={selectedDate || ''}
+            onChange={(e) => setSelectedDate(e.target.value || null)}
+            style={{
+              position: 'absolute',
+              opacity: 0,
+              pointerEvents: 'none',
+              width: '1px',
+              height: '1px'
+            }}
+          />
+          <button
+            onClick={() => dateInputRef.current?.showPicker?.()}
+            style={{
+              width: '36px',
+              height: '36px',
+              border: '1px solid #E5E7EB',
+              borderRadius: '8px',
+              background: 'white',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: '16px'
+            }}
+          >
+            📅
+          </button>
+        </div>
+      </div>
       
       <div className="content-area">
         {!storiesLoading && Array.isArray(stories) && stories.length > 0 && (
-          <h2 className="section-heading">
-            {searchQuery.trim() ? 'SEARCH RESULTS' : (selectedCategory === 'All' ? 'ALL STORIES' : selectedCategory.toUpperCase())}
-          </h2>
+          <>
+            <h2 className="section-heading">
+              {searchQuery.trim() ? 'SEARCH RESULTS' : 'Today\'s Briefing'}
+            </h2>
+                      </>
         )}
+        
+        {/* Featured Story - only show for All category and no search */}
+        {!storiesLoading && Array.isArray(stories) && stories.length > 0 && selectedCategory === 'All' && !searchQuery.trim() && (
+          <FeaturedStory story={stories[0]} onUpdateStory={handleUpdateStory} />
+        )}
+        
+        {/* Regular Stories Grid */}
         <div className="stories-grid">
           {storiesLoading ? (
             <div className="loading-placeholder"><p>Loading stories...</p></div>
           ) : !Array.isArray(stories) || stories.length === 0 ? (
             <div className="no-stories-placeholder">
-              <p>{searchQuery.trim() ? 'No results found' : 'No stories in this category yet.'}</p>
-              {searchQuery.trim() && <p>Try searching for a different topic or keyword.</p>}
+              <div className="empty-state-icon">📰</div>
+              <h3 className="empty-state-title">
+                {searchQuery.trim() ? 'No search results found' : 'No stories found'}
+              </h3>
+              <p className="empty-state-subtext">
+                {searchQuery.trim() 
+                  ? 'Try searching for a different topic or keyword.'
+                  : 'Try selecting a different category or date'
+                }
+              </p>
             </div>
           ) : (
-            stories.map(story => <StoryCard key={story.story_id} story={story} />)
+            displayedStories
+              .map((story, index) => {
+                // Skip the first story if it's featured
+                const storyIndex = selectedCategory === 'All' && !searchQuery.trim() && index === 0 ? null : story;
+                return storyIndex && <StoryCard key={storyIndex.story_id} story={storyIndex} onUpdateStory={handleUpdateStory} />;
+              })
           )}
         </div>
       </div>
@@ -781,33 +900,43 @@ function HomePage() {
 
 function CategoryBar({ selectedCategory, onCategoryChange }) {
   return (
-    <div className="category-bar">
-      {CATEGORIES.map(category => (
-        <button
-          key={category}
-          className={`category-pill ${selectedCategory === category ? 'active' : ''}`}
-          onClick={() => onCategoryChange(category)}
-        >
-          {category}
-        </button>
-      ))}
+    <div className="category-bar-container">
+      <div className="category-bar">
+        {CATEGORIES.map(category => (
+          <button
+            key={category}
+            className={`category-tab ${selectedCategory === category ? 'active' : ''}`}
+            onClick={() => onCategoryChange(category)}
+          >
+            {category}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
 
-function StoryCard({ story }) {
+function StoryCard({ story, onUpdateStory }) {
     const [isLiked, setIsLiked] = useState(false);
     const [isSaved, setIsSaved] = useState(false);
     const [isProcessing, setIsProcessing] = useState(false);
     const { user } = useAuth();
     const navigate = useNavigate();
 
+    // Calculate reading time based on summary word count
+    const calculateReadingTime = (summary) => {
+      if (!summary) return '1';
+      const wordCount = summary.split(/\s+/).length;
+      const readingTime = Math.ceil(wordCount / 200);
+      return readingTime.toString();
+    };
+
     // Check localStorage on mount
     useEffect(() => {
-      const likedArticles = JSON.parse(localStorage.getItem('likedArticles') || '[]');
-      const savedArticles = JSON.parse(localStorage.getItem('savedArticles') || '[]');
-      setIsLiked(likedArticles.some(article => article.story_id === story.story_id));
-      setIsSaved(savedArticles.some(article => article.story_id === story.story_id));
+      const likedStories = JSON.parse(localStorage.getItem('likedStories') || '[]');
+      const savedStories = JSON.parse(localStorage.getItem('savedStories') || '[]');
+      setIsLiked(likedStories.includes(story.story_id));
+      setIsSaved(savedStories.includes(story.story_id));
     }, [story.story_id]);
 
     const handleLike = async (e) => {
@@ -815,16 +944,48 @@ function StoryCard({ story }) {
       if (isProcessing) return;
       setIsProcessing(true);
       
+      // Optimistic update first
+      const newLikesCount = isLiked ? (story.likes_count || 1) - 1 : (story.likes_count || 0) + 1;
+      onUpdateStory(story.story_id, { likes_count: newLikesCount });
+      
       try {
-        const likedArticles = JSON.parse(localStorage.getItem('likedArticles') || '[]');
-        const newLikedArticles = isLiked 
-          ? likedArticles.filter(article => article.story_id !== story.story_id)
-          : [...likedArticles, story];
+        const token = localStorage.getItem('token');
+        const response = await fetch(`${API_BASE_URL}/api/stories/${story.story_id}/like`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
+        });
         
-        localStorage.setItem('likedArticles', JSON.stringify(newLikedArticles));
-        setIsLiked(!isLiked);
+        if (response.ok) {
+          const data = await response.json();
+          
+          // Update localStorage tracking
+          const likedStories = JSON.parse(localStorage.getItem('likedStories') || '[]');
+          if (isLiked) {
+            // Remove from liked stories
+            const newLikedStories = likedStories.filter(id => id !== story.story_id);
+            localStorage.setItem('likedStories', JSON.stringify(newLikedStories));
+          } else {
+            // Add to liked stories
+            likedStories.push(story.story_id);
+            localStorage.setItem('likedStories', JSON.stringify(likedStories));
+          }
+          
+          setIsLiked(!isLiked);
+          
+          // Update with real count from server
+          onUpdateStory(story.story_id, { 
+            likes_count: data.likes_count,
+            saves_count: data.saves_count
+          });
+        }
       } catch (error) {
         console.error('Error liking story:', error);
+        // Revert optimistic update on error
+        const revertLikesCount = isLiked ? (story.likes_count || 0) + 1 : (story.likes_count || 1) - 1;
+        onUpdateStory(story.story_id, { likes_count: revertLikesCount });
       } finally {
         setIsProcessing(false);
       }
@@ -835,16 +996,48 @@ function StoryCard({ story }) {
       if (isProcessing) return;
       setIsProcessing(true);
       
+      // Optimistic update first
+      const newSavesCount = isSaved ? (story.saves_count || 1) - 1 : (story.saves_count || 0) + 1;
+      onUpdateStory(story.story_id, { saves_count: newSavesCount });
+      
       try {
-        const savedArticles = JSON.parse(localStorage.getItem('savedArticles') || '[]');
-        const newSavedArticles = isSaved 
-          ? savedArticles.filter(article => article.story_id !== story.story_id)
-          : [...savedArticles, story];
+        const token = localStorage.getItem('token');
+        const response = await fetch(`${API_BASE_URL}/api/stories/${story.story_id}/save`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
+        });
         
-        localStorage.setItem('savedArticles', JSON.stringify(newSavedArticles));
-        setIsSaved(!isSaved);
+        if (response.ok) {
+          const data = await response.json();
+          
+          // Update localStorage tracking
+          const savedStories = JSON.parse(localStorage.getItem('savedStories') || '[]');
+          if (isSaved) {
+            // Remove from saved stories
+            const newSavedStories = savedStories.filter(id => id !== story.story_id);
+            localStorage.setItem('savedStories', JSON.stringify(newSavedStories));
+          } else {
+            // Add to saved stories
+            savedStories.push(story.story_id);
+            localStorage.setItem('savedStories', JSON.stringify(savedStories));
+          }
+          
+          setIsSaved(!isSaved);
+          
+          // Update with real count from server
+          onUpdateStory(story.story_id, { 
+            likes_count: data.likes_count,
+            saves_count: data.saves_count
+          });
+        }
       } catch (error) {
         console.error('Error saving story:', error);
+        // Revert optimistic update on error
+        const revertSavesCount = isSaved ? (story.saves_count || 0) + 1 : (story.saves_count || 1) - 1;
+        onUpdateStory(story.story_id, { saves_count: revertSavesCount });
       } finally {
         setIsProcessing(false);
       }
@@ -876,20 +1069,25 @@ function StoryCard({ story }) {
     const formatDate = (dateStr, fallback) => {
     const d = dateStr || fallback;
     if (!d) return 'Recent';
-    return new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+    const date = new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    return date;
   };
 
-    // Strip markdown bold markers for the card preview
+    // Strip markdown bold markers for the card preview - show only headline
     const stripMarkdown = (text) => {
       if (!text) return '';
       
       // Fix encoding first
       const fixedText = fixEncoding(text);
       
-      // Split on newlines FIRST to preserve paragraph structure
+      // Split on newlines to get lines
       const rawLines = fixedText.split('\n');
       
-      // Clean each line individually with the specified steps
+      // Get first non-empty line as headline
+      const firstLine = rawLines.find(line => line.trim() !== '');
+      if (!firstLine) return '';
+      
+      // Clean the headline line
       const cleanLine = (line) => {
         return line
           // a) Replace \*{4} (four asterisks) with space
@@ -909,15 +1107,14 @@ function StoryCard({ story }) {
           .trim();
       };
 
-      // Clean all lines and join with spaces for card preview
-      const cleanedLines = rawLines.map(line => cleanLine(line)).filter(Boolean);
-      const cleanedText = cleanedLines.join(' ');
+      const cleanedHeadline = cleanLine(firstLine);
       
-      return cleanedText.slice(0, 160) + '...';
+      // Truncate if too long
+      return cleanedHeadline.length > 120 ? cleanedHeadline.slice(0, 120) + '...' : cleanedHeadline;
     };
 
     return (
-      <div className="story-card" onClick={handleCardClick} style={{ cursor: 'pointer' }}>
+      <div className="story-card" onClick={handleCardClick}>
         {(story.cover_image || story.image_url) && (
           <div className="story-image-wrapper">
             <img
@@ -929,20 +1126,29 @@ function StoryCard({ story }) {
           </div>
         )}
         <div className="story-card-body">
+          {/* Category Badge - moved inside card */}
+          <div className="story-category-badge">
+            {story.category}
+          </div>
+          
           <h3 className="story-card-title">{story.title}</h3>
-          <span className="story-card-date">{formatDate(story.published_at, story.fetched_at)}</span>
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            fontSize: '13px',
+            color: '#9CA3AF',
+            marginBottom: '8px'
+          }}>
+            <span>{formatDate(story.published_at, story.fetched_at)}</span>
+            <span>·</span>
+            <span>{calculateReadingTime(story.summary)} min read</span>
+          </div>
           <p className="story-card-excerpt">{story.summary ? stripMarkdown(story.summary) : ''}</p>
           <div className="story-card-footer">
-            <a
-              href={story.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="story-source-link"
-              onClick={(e) => e.stopPropagation()}
-            >
-              View Original Source
-              <ArrowUpRight size={14} style={{ marginLeft: '4px' }} />
-            </a>
+            <div className="story-source">
+              {story.source}
+            </div>
             {user && (
               <div className="story-card-actions">
                 <button
@@ -952,6 +1158,7 @@ function StoryCard({ story }) {
                   title="Like"
                 >
                   <Heart size={15} fill={isLiked ? 'currentColor' : 'none'} />
+                  <span className="action-count">{story.likes_count || 0}</span>
                 </button>
                 <button
                   className={`action-btn ${isSaved ? 'active' : ''}`}
@@ -960,6 +1167,7 @@ function StoryCard({ story }) {
                   title="Save"
                 >
                   <Bookmark size={15} fill={isSaved ? 'currentColor' : 'none'} />
+                  <span className="action-count">{story.saves_count || 0}</span>
                 </button>
               </div>
             )}
@@ -969,20 +1177,329 @@ function StoryCard({ story }) {
     );
   }
 
+// Featured Story Component
+function FeaturedStory({ story, onUpdateStory }) {
+  const { user } = useAuth();
+  const navigate = useNavigate();
+  const [isLiked, setIsLiked] = useState(false);
+  const [isSaved, setIsSaved] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
+
+  useEffect(() => {
+    if (user) {
+      const likedStories = JSON.parse(localStorage.getItem('likedStories') || '[]');
+      const savedStories = JSON.parse(localStorage.getItem('savedStories') || '[]');
+      setIsLiked(likedStories.includes(story.story_id));
+      setIsSaved(savedStories.includes(story.story_id));
+    }
+  }, [user, story.story_id]);
+
+  const handleCardClick = () => {
+    if (user) {
+      try {
+        const readArticles = JSON.parse(localStorage.getItem('readArticles') || '[]');
+        const alreadyRead = readArticles.some(article => article.story_id === story.story_id);
+        
+        if (!alreadyRead) {
+          const newReadArticle = {
+            story_id: story.story_id,
+            title: story.title,
+            category: story.category,
+            readAt: new Date().toISOString()
+          };
+          readArticles.push(newReadArticle);
+          localStorage.setItem('readArticles', JSON.stringify(readArticles));
+        }
+      } catch (error) {
+        console.error('Error tracking read article:', error);
+      }
+    }
+    
+    navigate(`/story/${story.story_id}`);
+  };
+
+  const formatDate = (dateStr, fallback) => {
+    const d = dateStr || fallback;
+    if (!d) return 'Recent';
+    const date = new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    return date;
+  };
+
+  const calculateReadingTime = (summary) => {
+    if (!summary) return '1';
+    const wordsPerMinute = 200;
+    const wordCount = summary.split(/\s+/).length;
+    const readingTime = Math.ceil(wordCount / wordsPerMinute);
+    return readingTime.toString();
+  };
+
+  const handleLike = async (e) => {
+    e.stopPropagation();
+    if (isProcessing) return;
+    setIsProcessing(true);
+    
+    // Optimistic update first
+    const newLikesCount = isLiked ? (story.likes_count || 1) - 1 : (story.likes_count || 0) + 1;
+    onUpdateStory(story.story_id, { likes_count: newLikesCount });
+    
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${API_BASE_URL}/api/stories/${story.story_id}/like`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        
+        // Update localStorage tracking
+        const likedStories = JSON.parse(localStorage.getItem('likedStories') || '[]');
+        if (isLiked) {
+          // Remove from liked stories
+          const newLikedStories = likedStories.filter(id => id !== story.story_id);
+          localStorage.setItem('likedStories', JSON.stringify(newLikedStories));
+        } else {
+          // Add to liked stories
+          likedStories.push(story.story_id);
+          localStorage.setItem('likedStories', JSON.stringify(likedStories));
+        }
+        
+        setIsLiked(!isLiked);
+        
+        // Update with real count from server
+        onUpdateStory(story.story_id, { 
+          likes_count: data.likes_count,
+          saves_count: data.saves_count
+        });
+      }
+    } catch (error) {
+      console.error('Error liking story:', error);
+      // Revert optimistic update on error
+      const revertLikesCount = isLiked ? (story.likes_count || 0) + 1 : (story.likes_count || 1) - 1;
+      onUpdateStory(story.story_id, { likes_count: revertLikesCount });
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleSave = async (e) => {
+    e.stopPropagation();
+    if (isProcessing) return;
+    setIsProcessing(true);
+    
+    // Optimistic update first
+    const newSavesCount = isSaved ? (story.saves_count || 1) - 1 : (story.saves_count || 0) + 1;
+    onUpdateStory(story.story_id, { saves_count: newSavesCount });
+    
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${API_BASE_URL}/api/stories/${story.story_id}/save`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        
+        // Update localStorage tracking
+        const savedStories = JSON.parse(localStorage.getItem('savedStories') || '[]');
+        if (isSaved) {
+          // Remove from saved stories
+          const newSavedStories = savedStories.filter(id => id !== story.story_id);
+          localStorage.setItem('savedStories', JSON.stringify(newSavedStories));
+        } else {
+          // Add to saved stories
+          savedStories.push(story.story_id);
+          localStorage.setItem('savedStories', JSON.stringify(savedStories));
+        }
+        
+        setIsSaved(!isSaved);
+        
+        // Update with real count from server
+        onUpdateStory(story.story_id, { 
+          likes_count: data.likes_count,
+          saves_count: data.saves_count
+        });
+      }
+    } catch (error) {
+      console.error('Error saving story:', error);
+      // Revert optimistic update on error
+      const revertSavesCount = isSaved ? (story.saves_count || 0) + 1 : (story.saves_count || 1) - 1;
+      onUpdateStory(story.story_id, { saves_count: revertSavesCount });
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const stripMarkdown = (text) => {
+    if (!text) return '';
+    
+    const fixedText = text;
+    const rawLines = fixedText.split('\n');
+    const firstLine = rawLines.find(line => line.trim() !== '');
+    if (!firstLine) return '';
+    
+    const cleanLine = (line) => {
+      return line
+        .replace(/\*{4}/g, ' ')
+        .replace(/([^\s*])\*\*/g, '$1 ')
+        .replace(/\*\*([^\s*])/g, ' $1')
+        .replace(/\*/g, '')
+        .replace(/ {2,}/g, ' ')
+        .replace(/ ('s|'s)/g, "'s")
+        .replace(/ ([,\.;:!?])/g, '$1')
+        .trim();
+    };
+
+    const cleanedHeadline = cleanLine(firstLine);
+    return cleanedHeadline.length > 200 ? cleanedHeadline.slice(0, 200) + '...' : cleanedHeadline;
+  };
+
+  return (
+    <div className="featured-story" onClick={handleCardClick}>
+      <div className="featured-story-image">
+        {(story.cover_image || story.image_url) && (
+          <img
+            src={story.cover_image || story.image_url}
+            alt={story.title}
+            onError={(e) => { e.target.style.display = 'none'; }}
+          />
+        )}
+      </div>
+      <div className="featured-story-content">
+        <div className="story-category-badge">
+          {story.category}
+        </div>
+        
+        <h2 className="featured-story-title">{story.title}</h2>
+        
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '6px',
+          fontSize: '13px',
+          color: '#9CA3AF',
+          marginBottom: '12px'
+        }}>
+          <span>{formatDate(story.published_at, story.fetched_at)}</span>
+          <span>·</span>
+          <span>{calculateReadingTime(story.summary)} min read</span>
+        </div>
+        
+        <p className="featured-story-excerpt">
+          {story.summary ? stripMarkdown(story.summary) : ''}
+        </p>
+        
+        <div className="featured-story-footer">
+          <div className="story-source">
+            {story.source}
+          </div>
+          {user && (
+            <div className="story-card-actions">
+              <button
+                className={`action-btn ${isLiked ? 'active' : ''}`}
+                onClick={handleLike}
+                disabled={isProcessing}
+                title="Like"
+              >
+                <Heart size={15} fill={isLiked ? 'currentColor' : 'none'} />
+                <span className="action-count">{story.likes_count || 0}</span>
+              </button>
+              <button
+                className={`action-btn ${isSaved ? 'saved' : ''}`}
+                onClick={handleSave}
+                disabled={isProcessing}
+                title="Save"
+              >
+                <Bookmark size={15} fill={isSaved ? 'currentColor' : 'none'} />
+                <span className="action-count">{story.saves_count || 0}</span>
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Insights Page Component
 function InsightsPage() {
   const [insights, setInsights] = useState(null);
+  const [topLiked, setTopLiked] = useState([]);
+  const [topSaved, setTopSaved] = useState([]);
+  const [todayCoverage, setTodayCoverage] = useState(null);
+  const [storiesRead, setStoriesRead] = useState([]);
+  const [error, setError] = useState(null);
   const { user } = useAuth();
+  const navigate = useNavigate();
 
   useEffect(() => {
-    calculateInsights();
+    // Fetch fresh data immediately on load
+    fetchInsightsData();
+    
+    // Then refresh every 30 seconds
+    const interval = setInterval(() => {
+      fetchInsightsData();
+    }, 30000);
+    
+    // Force stop loading after 5 seconds no matter what
+    const timeout = setTimeout(() => {
+      setInsights(prev => ({ ...prev, loading: false }));
+    }, 5000);
+    
+    return () => {
+      clearInterval(interval);
+      clearTimeout(timeout);
+    };
   }, []);
+
+  const fetchInsightsData = async () => {
+    try {
+      // Fetch top liked and saved stories
+      const [topLikedRes, topSavedRes] = await Promise.all([
+        fetch(`${API_BASE_URL}/api/stories/top-liked`),
+        fetch(`${API_BASE_URL}/api/stories/top-saved`)
+      ]);
+
+      if (topLikedRes.ok) {
+        const likedData = await topLikedRes.json();
+        setTopLiked(likedData);
+      } else {
+        throw new Error('Failed to fetch top liked stories');
+      }
+
+      if (topSavedRes.ok) {
+        const savedData = await topSavedRes.json();
+        setTopSaved(savedData);
+      } else {
+        throw new Error('Failed to fetch top saved stories');
+      }
+
+      // Get read stories from localStorage
+      const readStories = JSON.parse(localStorage.getItem('readStories') || '[]');
+      setStoriesRead(readStories);
+
+      // Calculate local insights
+      calculateInsights();
+    } catch (error) {
+      console.error('Error fetching insights data:', error);
+      setError(error.message || 'Failed to load insights');
+    } finally {
+      // Always set loading to false
+      setInsights(prev => ({ ...prev, loading: false }));
+    }
+  };
 
   const calculateInsights = () => {
     try {
       const readArticles = JSON.parse(localStorage.getItem('readArticles') || '[]');
-      const likedArticles = JSON.parse(localStorage.getItem('likedArticles') || '[]');
-      const savedArticles = JSON.parse(localStorage.getItem('savedArticles') || '[]');
+      const todayReadArticles = JSON.parse(localStorage.getItem('readStories') || '[]');
       
       // Get all categories from full article feed (for blindspot detection)
       const allCategories = ['Technology', 'Business', 'Science', 'Health', 'Politics', 'World', 'Sports', 'Entertainment'];
@@ -1001,19 +1518,16 @@ function InsightsPage() {
         topicCounts[category] = (topicCounts[category] || 0) + 1;
       });
       
-      const maxCount = Math.max(...Object.values(topicCounts), 1);
+      const totalReads = Object.values(topicCounts).reduce((sum, count) => sum + count, 0);
       const topicHeatmap = Object.entries(topicCounts)
-        .map(([topic, count]) => ({ topic, count, percentage: (count / maxCount) * 100 }))
+        .map(([topic, count]) => ({ 
+          topic, 
+          count, 
+          percentage: totalReads > 0 ? Math.round((count / totalReads) * 100) : 0 
+        }))
         .sort((a, b) => b.count - a.count);
 
-      // Blindspot Alert: Find categories with zero or very low read counts
-      const categoryReadCounts = {};
-      readArticles.forEach(article => {
-        const category = article.category || 'Other';
-        categoryReadCounts[category] = (categoryReadCounts[category] || 0) + 1;
-      });
-      
-      // Count reads per category in last 30 days (case-insensitive)
+      // Blindspot Alert: Find all categories not read recently
       const recentCategoryCounts = {};
       recentReadArticles.forEach(article => {
         const category = article.category || 'Other';
@@ -1021,76 +1535,48 @@ function InsightsPage() {
         recentCategoryCounts[normalizedCategory] = (recentCategoryCounts[normalizedCategory] || 0) + 1;
       });
       
-      // Find blindspot category
-      const allCategoriesNormalized = ['technology', 'politics', 'business', 'sports', 'health', 'science', 'world news', 'entertainment'];
-      const categoryCounts = {};
-      
-      allCategoriesNormalized.forEach(normalizedCat => {
-        categoryCounts[normalizedCat] = recentCategoryCounts[normalizedCat] || 0;
-      });
-      
-      const counts = Object.values(categoryCounts);
-      const maxReadCount = Math.max(...counts);
-      const minCount = Math.min(...counts);
-      
-      let blindspotAlert;
-      let blindspotCategory = null;
-      
-      if (maxReadCount - minCount <= 1) {
-        // All categories read equally (difference of 1 or less)
-        blindspotAlert = "Great job! You're reading a diverse range of topics.";
-      } else {
-        // Find category with lowest count
-        const lowestCount = Math.min(...Object.values(categoryCounts));
-        const lowestCategories = allCategoriesNormalized.filter(cat => categoryCounts[cat] === lowestCount);
-        
-        // If tie, pick the one that appears least recently in history
-        if (lowestCategories.length > 1) {
-          const categoryLastRead = {};
-          readArticles.forEach(article => {
-            const normalizedCat = (article.category || 'Other').toLowerCase();
-            if (!categoryLastRead[normalizedCat] || new Date(article.readAt) > new Date(categoryLastRead[normalizedCat])) {
-              categoryLastRead[normalizedCat] = article.readAt;
-            }
-          });
-          
-          blindspotCategory = lowestCategories
-            .filter(cat => categoryLastRead[cat])
-            .sort((a, b) => new Date(categoryLastRead[a]) - new Date(categoryLastRead[b]))[0] || lowestCategories[0];
-        } else {
-          blindspotCategory = lowestCategories[0];
-        }
-        
-        // Format category name for display (title case)
-        const displayCategory = blindspotCategory.split(' ').map(word => 
-          word.charAt(0).toUpperCase() + word.slice(1)
-        ).join(' ');
-        
-        const readCount = categoryCounts[blindspotCategory];
-        
-        if (readCount === 0) {
-          blindspotAlert = `You haven't read any ${displayCategory} stories yet. Try exploring it!`;
-        } else {
-          blindspotAlert = `You haven't explored ${displayCategory} much lately. Try reading more ${displayCategory} stories.`;
-        }
-      }
-
-      // Time Saved: 4 minutes saved per article = 0.067 hours
-      const timeSaved = (readArticles.length * 0.067).toFixed(1);
+      const allCategoriesNormalized = ['technology', 'politics', 'business', 'sports', 'health', 'science', 'world', 'entertainment'];
+      const blindspotCategories = allCategoriesNormalized.filter(normalizedCat => 
+        !recentCategoryCounts[normalizedCat] || recentCategoryCounts[normalizedCat] === 0
+      );
 
       // Daily Streak: Calculate consecutive days with at least one article read
       const streak = calculateDailyStreak(readArticles);
 
-      // Reading Pattern
-      const readingPattern = calculateReadingPattern(readArticles);
+      // Stories Read Today
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const tomorrow = new Date(today);
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      
+      const todayReadCount = todayReadArticles.filter(storyId => {
+        // This would need to be enhanced with timestamps for proper today tracking
+        return true; // For now, count all read stories
+      }).length;
+
+      // Today's Coverage (mock data - would come from API)
+      const coverageData = {
+        totalStories: 25,
+        categories: [
+          { name: 'Technology', count: 8 },
+          { name: 'Politics', count: 6 },
+          { name: 'Business', count: 5 },
+          { name: 'Health', count: 3 },
+          { name: 'Science', count: 2 },
+          { name: 'Sports', count: 1 }
+        ]
+      };
+
+      setStoriesRead(todayReadArticles);
+      setTodayCoverage(coverageData);
 
       setInsights({
         topicHeatmap,
-        blindspotAlert,
-        timeSaved,
+        blindspotCategories,
         streak,
         totalArticles: readArticles.length,
-        ...readingPattern
+        todayReadCount,
+        hasReadToday
       });
     } catch (error) {
       console.error('Error calculating insights:', error);
@@ -1132,50 +1618,6 @@ function InsightsPage() {
     return currentStreak;
   };
 
-  const calculateReadingPattern = (readArticles) => {
-    if (readArticles.length === 0) {
-      return {
-        mostActiveDay: 'No data',
-        averageDaily: 0,
-        peakTime: 'No data'
-      };
-    }
-
-    // Most Active Day: Group by day of week
-    const dayCounts = {};
-    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    
-    readArticles.forEach(article => {
-      const dayName = dayNames[new Date(article.readAt).getDay()];
-      dayCounts[dayName] = (dayCounts[dayName] || 0) + 1;
-    });
-    
-    const mostActiveDay = Object.entries(dayCounts)
-      .sort(([,a], [,b]) => b - a)[0]?.[0] || 'No data';
-
-    // Average Daily: Total articles ÷ distinct days
-    const uniqueDays = new Set(
-      readArticles.map(article => new Date(article.readAt).toDateString())
-    ).size;
-    const averageDaily = uniqueDays > 0 ? (readArticles.length / uniqueDays).toFixed(1) : 0;
-
-    // Peak Time: Group by hour
-    const hourCounts = {};
-    readArticles.forEach(article => {
-      const hour = new Date(article.readAt).getHours();
-      hourCounts[hour] = (hourCounts[hour] || 0) + 1;
-    });
-    
-    const peakHour = Object.entries(hourCounts)
-      .sort(([,a], [,b]) => b - a)[0]?.[0];
-    
-    const peakTime = peakHour !== undefined 
-      ? `${peakHour > 12 ? peakHour - 12 : peakHour === 0 ? 12 : peakHour}:00 ${peakHour >= 12 ? 'PM' : 'AM'}`
-      : 'No data';
-
-    return { mostActiveDay, averageDaily, peakTime };
-  };
-
   if (!user) {
     return <Navigate to="/login" />;
   }
@@ -1185,6 +1627,43 @@ function InsightsPage() {
       <div className="insights-page">
         <div className="loading-placeholder">
           <p>Loading insights...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="insights-page">
+        <div style={{
+          textAlign: 'center',
+          padding: '60px 20px',
+          color: '#6B7280'
+        }}>
+          <div style={{ fontSize: '48px', marginBottom: '16px' }}>📊</div>
+          <h3 style={{ fontSize: '18px', color: '#111827', marginBottom: '8px' }}>
+            Unable to load insights
+          </h3>
+          <p style={{ fontSize: '14px' }}>
+            Make sure the backend is running on port 5000
+          </p>
+          <button 
+            onClick={() => {
+              setError(null);
+              fetchInsightsData();
+            }}
+            style={{
+              marginTop: '16px',
+              padding: '8px 20px',
+              background: '#111827',
+              color: 'white',
+              border: 'none',
+              borderRadius: '8px',
+              cursor: 'pointer'
+            }}
+          >
+            Try Again
+          </button>
         </div>
       </div>
     );
@@ -1202,110 +1681,221 @@ function InsightsPage() {
         userPreferences={[]}
       />
       
-      <div className="insights-container-new">
-        <div className="insights-header-new">
-          <h1 className="insights-title-new">Your Reading Insights</h1>
-          <p className="insights-subtitle">Discover your reading patterns and expand your horizons</p>
+      <div className="insights-grid">
+        {/* Reading Streak - Prominent */}
+        <div className="insights-card streak-card">
+          <div className="streak-content">
+            <div className="streak-number">{insights.streak}</div>
+            <div className="streak-label">Reading Streak</div>
+            <div className="streak-sublabel">Days in a row</div>
+          </div>
+          <div className="streak-icon">{insights.streak > 0 ? '🔥' : '📖'}</div>
         </div>
 
-        {/* Top Row: Topic Heatmap (Left) + Blindspot Alert (Right) */}
-        <div className="insights-top-row-new">
-          {/* Topic Heatmap */}
-          <div className="insights-card-large">
-            <div className="insights-card-header">
-              <div className="insights-icon">📊</div>
-              <div>
-                <h3 className="insights-card-title">Topic Heatmap</h3>
-                <p className="insights-card-subtitle">Your reading interests over last 30 days</p>
-              </div>
-            </div>
-            <div className="topic-bars">
-              {insights.topicHeatmap?.map((topic, index) => (
+        {/* Your Reading Interests */}
+        <div className="insights-card">
+          <div className="card-header">
+            <h3>Your Reading Interests</h3>
+            <p className="card-subtitle">Last 30 days</p>
+          </div>
+          <div className="topic-bars">
+            {insights.topicHeatmap?.map((topic, index) => {
+              const categoryColors = {
+                'Technology': '#3B82F6',
+                'Politics': '#EF4444', 
+                'Business': '#10B981',
+                'Sports': '#F59E0B',
+                'Health': '#8B5CF6',
+                'Science': '#06B6D4',
+                'World': '#F97316',
+                'Entertainment': '#EC4899'
+              };
+              const color = categoryColors[topic.topic] || '#6B7280';
+              
+              return (
                 <div key={index} className="topic-bar">
                   <span className="topic-name">{topic.topic}</span>
                   <div className="progress-track">
                     <div 
                       className="progress-fill" 
-                      style={{ width: `${topic.percentage}%` }}
+                      style={{ width: `${Math.min(topic.percentage, 100)}%`, backgroundColor: color }}
                     ></div>
                   </div>
-                  <span className="topic-count">{topic.count}</span>
+                  <span className="topic-count">{topic.count} ({topic.percentage}%)</span>
                 </div>
-              ))}
-            </div>
+              );
+            })}
           </div>
+        </div>
 
-          {/* Blindspot Alert */}
-          <div className="insights-card-small">
-            <div className="insights-card-header">
-              <div className="insights-icon warning">⚠️</div>
-              <div>
-                <h3 className="insights-card-title">Blindspot Alert</h3>
-              </div>
+        {/* Most Read Today */}
+        <div className="insights-card">
+          <div className="card-header">
+            <h3>Most Read Today</h3>
+            <p className="card-subtitle">Top liked stories</p>
+          </div>
+          <div className="top-stories">
+            {topLiked.length > 0 ? (
+              topLiked.map((story, index) => (
+                <div 
+                  key={index} 
+                  className="top-story-item clickable"
+                  onClick={() => navigate(`/story/${story.story_id}`)}
+                  style={{
+                    cursor: 'pointer',
+                    padding: '10px 0',
+                    borderBottom: '1px solid #F3F4F6'
+                  }}
+                >
+                  <div className="story-info">
+                    <div className="story-title">{story.title.substring(0, 60)}...</div>
+                    <div className="story-meta">
+                      <span className="story-category">{story.category}</span>
+                      <span className="story-likes" style={{ fontWeight: '600', color: '#DC2626' }}>{story.likes_count}</span>
+                    </div>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="no-data">No stories liked today</div>
+            )}
+          </div>
+        </div>
+
+        {/* Most Saved Today */}
+        <div className="insights-card">
+          <div className="card-header">
+            <h3>Most Saved Today</h3>
+            <p className="card-subtitle">Top bookmarked stories</p>
+          </div>
+          <div className="top-stories">
+            {topSaved.length > 0 ? (
+              topSaved.map((story, index) => (
+                <div 
+                  key={index} 
+                  className="top-story-item clickable"
+                  onClick={() => navigate(`/story/${story.story_id}`)}
+                  style={{
+                    cursor: 'pointer',
+                    padding: '10px 0',
+                    borderBottom: '1px solid #F3F4F6'
+                  }}
+                >
+                  <div className="story-info">
+                    <div className="story-title">{story.title.substring(0, 60)}...</div>
+                    <div className="story-meta">
+                      <span className="story-category">{story.category}</span>
+                      <span className="story-saves" style={{ fontWeight: '600', color: '#059669' }}>{story.saves_count}</span>
+                    </div>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="no-data">No stories saved today</div>
+            )}
+          </div>
+        </div>
+
+        {/* Today's Coverage */}
+        <div className="insights-card">
+          <div className="card-header">
+            <h3>Today's Coverage</h3>
+            <p className="card-subtitle">Stories by category</p>
+          </div>
+          <div className="coverage-content">
+            <div className="coverage-summary">
+              Today's briefing covers <strong>{todayCoverage?.totalStories || 25}</strong> stories across <strong>{todayCoverage?.categories?.length || 6}</strong> categories
             </div>
-            <div className="blindspot-content">
-              <p>{insights.blindspotAlert}</p>
+            <div className="coverage-grid">
+              {todayCoverage?.categories?.map((cat, index) => {
+                const categoryColors = {
+                  'Technology': { bg: '#3B82F6', text: 'white' },
+                  'Politics': { bg: '#EF4444', text: 'white' },
+                  'Business': { bg: '#10B981', text: 'white' },
+                  'Sports': { bg: '#F59E0B', text: 'white' },
+                  'Health': { bg: '#8B5CF6', text: 'white' },
+                  'Science': { bg: '#06B6D4', text: 'white' },
+                  'World': { bg: '#F97316', text: 'white' },
+                  'Entertainment': { bg: '#EC4899', text: 'white' }
+                };
+                const colors = categoryColors[cat.name] || { bg: '#6B7280', text: 'white' };
+                
+                return (
+                  <div 
+                    key={index} 
+                    className="coverage-category clickable"
+                    onClick={() => navigate(`/?category=${cat.name}`)}
+                    style={{
+                      cursor: 'pointer',
+                      background: colors.bg,
+                      color: colors.text,
+                      padding: '8px 16px',
+                      borderRadius: '8px',
+                      fontWeight: '600',
+                      fontSize: '14px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      transition: 'all 0.15s ease',
+                      border: '1px solid transparent'
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.transform = 'translateY(-1px)'}
+                    onMouseLeave={e => e.currentTarget.style.transform = 'translateY(0)'}
+                  >
+                    {cat.name} <span style={{
+                      background: 'rgba(0,0,0,0.1)',
+                      borderRadius: '4px',
+                      padding: '1px 6px',
+                      fontSize: '12px'
+                    }}>{cat.count}</span>
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>
 
-        {/* Bottom Row: Time Saved (Green) + Daily Streak (Purple) + Reading Pattern (Blue) */}
-        <div className="insights-bottom-row-new">
-          {/* Time Saved */}
-          <div className="insights-card-small time-saved-new">
-            <div className="insights-card-header">
-              <div className="insights-icon time">⏰</div>
-              <div>
-                <h3 className="insights-card-title">Time Saved</h3>
-                <p className="insights-card-subtitle">Efficient reading</p>
+        {/* Stories Read */}
+        <div className="insights-card">
+          <div className="card-header">
+            <h3>Stories Read</h3>
+            <p className="card-subtitle">Your progress today</p>
+          </div>
+          <div className="stories-read-content">
+            <div className="read-progress">
+              <div className="progress-summary">
+                You've read <strong>{storiesRead.length}</strong> of <strong>{todayCoverage?.totalStories || 25}</strong> stories
               </div>
-            </div>
-            <div className="insights-metrics">
-              <div className="insights-value-large green">{insights.timeSaved}</div>
-              <div className="insights-label">Hours Saved</div>
-              <div className="insights-sub-label">Based on {insights.totalArticles} articles read</div>
+              <div className="progress-bar">
+                <div 
+                  className="progress-fill-read" 
+                  style={{ width: `${Math.min((storiesRead.length / (todayCoverage?.totalStories || 25)) * 100, 100)}%` }}
+                ></div>
+              </div>
             </div>
           </div>
+        </div>
 
-          {/* Daily Streak */}
-          <div className="insights-card-small streak-new">
-            <div className="insights-card-header">
-              <div className="insights-icon streak">🔥</div>
-              <div>
-                <h3 className="insights-card-title">Daily Streak</h3>
-                <p className="insights-card-subtitle">Reading consistency</p>
-              </div>
-            </div>
-            <div className="insights-metrics">
-              <div className="insights-value-large purple">{insights.streak}</div>
-              <div className="insights-label">Current Streak</div>
-              <div className="insights-sub-label">Longest: {insights.streak} days</div>
-            </div>
+        {/* Blindspot Alert */}
+        <div className="insights-card">
+          <div className="card-header">
+            <h3>Blindspot Alert</h3>
+            <p className="card-subtitle">Categories to explore</p>
           </div>
-
-          {/* Reading Pattern */}
-          <div className="insights-card-small pattern-new">
-            <div className="insights-card-header">
-              <div className="insights-icon pattern">📈</div>
-              <div>
-                <h3 className="insights-card-title">Reading Pattern</h3>
-                <p className="insights-card-subtitle">Your reading habits</p>
+          <div className="blindspot-content">
+            {insights.blindspotCategories?.length > 0 ? (
+              <div className="blindspot-pills">
+                {insights.blindspotCategories.map((category, index) => (
+                  <span key={index} className="blindspot-pill">
+                    {category.charAt(0).toUpperCase() + category.slice(1)}
+                  </span>
+                ))}
               </div>
-            </div>
-            <div className="insights-pattern-details">
-              <div className="pattern-row">
-                <span>Most Active Day</span>
-                <span>{insights.mostActiveDay}</span>
+            ) : (
+              <div className="no-blindspot">
+                Great job! You're reading a diverse range of topics.
               </div>
-              <div className="pattern-row">
-                <span>Average Daily</span>
-                <span>{insights.averageDaily}</span>
-              </div>
-              <div className="pattern-row">
-                <span>Peak Time</span>
-                <span>{insights.peakTime}</span>
-              </div>
-            </div>
+            )}
           </div>
         </div>
       </div>
@@ -1336,15 +1926,44 @@ function LibraryPage() {
     }
   }, [user, activeTab]);
 
-  const loadLibraryData = () => {
+  const loadLibraryData = async () => {
     try {
-      const likedArticles = JSON.parse(localStorage.getItem('likedArticles') || '[]');
-      const savedArticles = JSON.parse(localStorage.getItem('savedArticles') || '[]');
+      const likedStoryIds = JSON.parse(localStorage.getItem('likedStories') || '[]');
+      const savedStoryIds = JSON.parse(localStorage.getItem('savedStories') || '[]');
       
-      setLikedStories(likedArticles);
-      setSavedStories(savedArticles);
+      // Fetch fresh story data from API to get current likes_count and saves_count
+      const token = localStorage.getItem('token');
+      
+      if (likedStoryIds.length > 0) {
+        const likedPromises = likedStoryIds.map(storyId => 
+          fetch(`${API_BASE_URL}/api/stories/${storyId}`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+          }).then(res => res.json()).catch(() => null)
+        );
+        const likedData = await Promise.all(likedPromises);
+        setLikedStories(likedData.filter(story => story !== null));
+      } else {
+        setLikedStories([]);
+      }
+      
+      if (savedStoryIds.length > 0) {
+        const savedPromises = savedStoryIds.map(storyId => 
+          fetch(`${API_BASE_URL}/api/stories/${storyId}`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+          }).then(res => res.json()).catch(() => null)
+        );
+        const savedData = await Promise.all(savedPromises);
+        setSavedStories(savedData.filter(story => story !== null));
+      } else {
+        setSavedStories([]);
+      }
     } catch (error) {
       console.error('Error loading library data:', error);
+      // Fallback to localStorage data
+      const likedStoryIds = JSON.parse(localStorage.getItem('likedStories') || '[]');
+      const savedStoryIds = JSON.parse(localStorage.getItem('savedStories') || '[]');
+      setLikedStories(likedStoryIds);
+      setSavedStories(savedStoryIds);
     }
   };
 
@@ -1353,6 +1972,33 @@ function LibraryPage() {
   }
 
   const displayStories = activeTab === 'liked' ? likedStories : savedStories;
+
+  // Update story in library after like/save action
+  const updateLibraryStory = (storyId, updates) => {
+    setLikedStories(prev => prev.map(story => 
+      story.story_id === storyId ? { ...story, ...updates } : story
+    ));
+    setSavedStories(prev => prev.map(story => 
+      story.story_id === storyId ? { ...story, ...updates } : story
+    ));
+  };
+
+  // Remove story from library
+  const removeFromLibrary = (storyId, type) => {
+    if (type === 'liked') {
+      setLikedStories(prev => prev.filter(story => story.story_id !== storyId));
+      // Update localStorage
+      const likedStories = JSON.parse(localStorage.getItem('likedStories') || '[]');
+      const newLikedStories = likedStories.filter(id => id !== storyId);
+      localStorage.setItem('likedStories', JSON.stringify(newLikedStories));
+    } else if (type === 'saved') {
+      setSavedStories(prev => prev.filter(story => story.story_id !== storyId));
+      // Update localStorage
+      const savedStories = JSON.parse(localStorage.getItem('savedStories') || '[]');
+      const newSavedStories = savedStories.filter(id => id !== storyId);
+      localStorage.setItem('savedStories', JSON.stringify(newSavedStories));
+    }
+  };
 
   return (
     <div className="library-page">
@@ -1368,34 +2014,44 @@ function LibraryPage() {
       
       <div className="library-container">
         <div className="library-header">
-          <h1 className="section-heading">MY LIBRARY</h1>
-          <p>Your personal collection of saved and liked stories</p>
+          <h1 className="library-title">My Library</h1>
+          <p className="library-subtitle">Your saved and liked stories</p>
+          <div className="library-divider"></div>
         </div>
 
-        <div className="library-tabs">
-          <button 
-            className={`library-tab ${activeTab === 'saved' ? 'active' : ''}`}
-            onClick={() => setActiveTab('saved')}
-          >
-            <Bookmark size={16} />
-            Saved Stories ({savedStories.length})
-          </button>
-          <button 
-            className={`library-tab ${activeTab === 'liked' ? 'active' : ''}`}
-            onClick={() => setActiveTab('liked')}
-          >
-            <Heart size={16} />
-            Liked Stories ({likedStories.length})
-          </button>
+        <div className="library-tabs-container">
+          <div className="library-tabs">
+            <button 
+              className={`library-tab ${activeTab === 'saved' ? 'active' : ''}`}
+              onClick={() => setActiveTab('saved')}
+            >
+              <Bookmark size={16} />
+              Saved Stories ({savedStories.length})
+            </button>
+            <button 
+              className={`library-tab ${activeTab === 'liked' ? 'active' : ''}`}
+              onClick={() => setActiveTab('liked')}
+            >
+              <Heart size={16} />
+              Liked Stories ({likedStories.length})
+            </button>
+          </div>
+        </div>
+
+        <div className="library-count-summary">
+          {savedStories.length} stories saved  ·  {likedStories.length} stories liked
         </div>
 
         {displayStories.length === 0 ? (
           <div className="empty-library">
-            <h3>No {activeTab} stories yet</h3>
+            <div className="empty-icon">
+              {activeTab === 'saved' ? <Bookmark size={48} /> : <Heart size={48} />}
+            </div>
+            <h3>No {activeTab === 'saved' ? 'saved' : 'liked'} stories yet</h3>
             <p>
               {activeTab === 'saved' 
-                ? 'Start saving stories you want to read later by clicking the bookmark icon.'
-                : 'Start liking stories you enjoy by clicking the heart icon.'
+                ? 'Click the bookmark icon on any story to save it here'
+                : 'Click the heart icon on any story to like it'
               }
             </p>
             <Link to="/" className="browse-btn">Browse Stories</Link>
@@ -1403,7 +2059,16 @@ function LibraryPage() {
         ) : (
           <div className="library-stories">
             {displayStories.map((story) => (
-              <StoryCard key={story.story_id} story={story} />
+              <div key={story.story_id} className="library-story-card">
+                <button 
+                  className="remove-from-library"
+                  onClick={() => removeFromLibrary(story.story_id, activeTab)}
+                  title={`Remove from ${activeTab}`}
+                >
+                  <X size={16} />
+                </button>
+                <StoryCard key={story.story_id} story={story} onUpdateStory={updateLibraryStory} />
+              </div>
             ))}
           </div>
         )}
@@ -1468,12 +2133,138 @@ function App() {
 }
 
 // Full Story Page Component
+// Full Story Page Component
 function FullStoryPage() {
     const { id } = useParams();
     const [story, setStory] = useState(null);
     const [loading, setLoading] = useState(true);
+    const [showToast, setShowToast] = useState(false);
+    const [isLiked, setIsLiked] = useState(false);
+    const [isSaved, setIsSaved] = useState(false);
+    const [likeCount, setLikeCount] = useState(0);
     const { user } = useAuth();
     const navigate = useNavigate();
+
+    // Helper function to render bold markdown
+    const renderWithBold = (text) => {
+        if (!text) return null
+        const parts = text.split(/(\*\*[^*]+\*\*)/g)
+        return parts.map((part, i) => {
+            if (part.startsWith('**') && part.endsWith('**')) {
+                return <strong key={i}>{part.slice(2, -2)}</strong>
+            }
+            return part
+        })
+    }
+
+    // Handle like functionality
+    const handleLike = async () => {
+      if (!user) return;
+      
+      try {
+        const token = localStorage.getItem('token');
+        const response = await fetch(`${API_BASE_URL}/api/stories/${story.story_id}/like`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          
+          // Update localStorage tracking
+          const likedStories = JSON.parse(localStorage.getItem('likedStories') || '[]');
+          if (isLiked) {
+            // Remove from liked stories
+            const newLikedStories = likedStories.filter(id => id !== story.story_id);
+            localStorage.setItem('likedStories', JSON.stringify(newLikedStories));
+          } else {
+            // Add to liked stories
+            likedStories.push(story.story_id);
+            localStorage.setItem('likedStories', JSON.stringify(likedStories));
+          }
+          
+          setIsLiked(!isLiked);
+          setLikeCount(data.likes_count);
+          
+          // Update story object with new counts
+          setStory(prev => ({
+            ...prev,
+            likes_count: data.likes_count,
+            saves_count: data.saves_count
+          }));
+        }
+      } catch (error) {
+        console.error('Error liking story:', error);
+      }
+    };
+
+    // Handle bookmark functionality
+    const handleBookmark = async () => {
+      if (!user) return;
+      
+      try {
+        const token = localStorage.getItem('token');
+        const response = await fetch(`${API_BASE_URL}/api/stories/${story.story_id}/save`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          
+          // Update localStorage tracking
+          const savedStories = JSON.parse(localStorage.getItem('savedStories') || '[]');
+          if (isSaved) {
+            // Remove from saved stories
+            const newSavedStories = savedStories.filter(id => id !== story.story_id);
+            localStorage.setItem('savedStories', JSON.stringify(newSavedStories));
+          } else {
+            // Add to saved stories
+            savedStories.push(story.story_id);
+            localStorage.setItem('savedStories', JSON.stringify(savedStories));
+          }
+          
+          setIsSaved(!isSaved);
+          
+          // Update story object with new counts
+          setStory(prev => ({
+            ...prev,
+            likes_count: data.likes_count,
+            saves_count: data.saves_count
+          }));
+        }
+      } catch (error) {
+        console.error('Error saving story:', error);
+      }
+    };
+
+    // Handle share functionality
+    const handleShare = async () => {
+      const shareData = {
+        title: story.title,
+        url: window.location.href
+      };
+
+      try {
+        if (navigator.share) {
+          // Use Web Share API for mobile devices
+          await navigator.share(shareData);
+        } else {
+          // Fallback: copy URL to clipboard
+          await navigator.clipboard.writeText(shareData.url);
+          setShowToast(true);
+          setTimeout(() => setShowToast(false), 2000);
+        }
+      } catch (error) {
+        console.error('Error sharing:', error);
+      }
+    };
 
     useEffect(() => {
       const fetchStory = async () => {
@@ -1482,6 +2273,24 @@ function FullStoryPage() {
           if (response.ok) {
             const storyData = await response.json();
             setStory(storyData);
+            
+            // Track article read in localStorage
+            const readStories = JSON.parse(localStorage.getItem('readStories') || '[]');
+            if (!readStories.includes(storyData.story_id)) {
+              readStories.push(storyData.story_id);
+              localStorage.setItem('readStories', JSON.stringify(readStories));
+            }
+            
+            // Load like and bookmark state
+            if (user) {
+              const likedStories = JSON.parse(localStorage.getItem('likedStories') || '[]');
+              const savedStories = JSON.parse(localStorage.getItem('savedStories') || '[]');
+              setIsLiked(likedStories.includes(storyData.story_id));
+              setIsSaved(savedStories.includes(storyData.story_id));
+              
+              // Use global like count from story data
+              setLikeCount(storyData.likes_count || 0);
+            }
           }
         } catch (error) {
           console.error('Error fetching story:', error);
@@ -1490,7 +2299,7 @@ function FullStoryPage() {
         }
       };
       fetchStory();
-    }, [id]);
+    }, [id, user]);
 
     if (loading) return <div className="loading">Loading story...</div>;
     if (!story) return <div className="error">Story not found</div>;
@@ -1516,6 +2325,11 @@ function FullStoryPage() {
       let body = [];
       let fastFacts = [];
       let inFastFacts = false;
+
+      // Function to convert **bold** markdown to <strong> tags
+      const renderBold = (text) => {
+        return text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+      };
 
       // Clean each line individually with the specified steps
       const cleanLine = (line) => {
@@ -1543,7 +2357,7 @@ function FullStoryPage() {
 
         if (i === 0) {
           // First line is headline
-          headline = cleanLine(trimmedLine);
+          headline = renderBold(cleanLine(trimmedLine));
           return;
         }
         
@@ -1554,11 +2368,11 @@ function FullStoryPage() {
         
         if (inFastFacts && trimmedLine) {
           // Strip leading dashes/bullets from fast facts
-          const clean = cleanLine(trimmedLine.replace(/^[-\u2022]\s*/, ''));
+          const clean = renderBold(cleanLine(trimmedLine.replace(/^[-\u2022]\s*/, '')));
           if (clean) fastFacts.push(clean);
         } else if (!inFastFacts && trimmedLine) {
           // Add to body after cleaning
-          const clean = cleanLine(trimmedLine);
+          const clean = renderBold(cleanLine(trimmedLine));
           if (clean) body.push(clean);
         }
       });
@@ -1580,6 +2394,30 @@ function FullStoryPage() {
           userPreferences={[]}
         />
 
+        {/* Toast notification for clipboard copy */}
+        {showToast && (
+          <div className="share-toast">
+            Link copied!
+          </div>
+        )}
+
+        {/* Back button and Share button - Moved above image */}
+        <div className="full-story-actions-fixed">
+          <button 
+            className="back-to-briefing-btn"
+            onClick={() => window.history.back()}
+          >
+            ← Back to Briefing
+          </button>
+          <button 
+            className="share-btn"
+            onClick={handleShare}
+            title="Share article"
+          >
+            Share ↗
+          </button>
+        </div>
+
         <div className="full-story-outer">
           {/* Cover Image */}
           {(story.cover_image || story.image_url) && (
@@ -1599,17 +2437,44 @@ function FullStoryPage() {
               <span className="full-story-date">{formatDate(story.published_at)}</span>
             </div>
 
+            {/* Like and Bookmark buttons */}
+            <div className="full-story-actions-row">
+              <button 
+                className={`like-btn ${isLiked ? 'liked' : ''}`}
+                onClick={handleLike}
+                title="Like article"
+              >
+                {isLiked ? '❤️' : '🤍'}
+                <span className="like-count">{story.likes_count || 0}</span>
+              </button>
+              <button 
+                className={`bookmark-btn ${isSaved ? 'saved' : ''}`}
+                onClick={handleBookmark}
+                title="Bookmark article"
+              >
+                {isSaved ? '🔖' : '🔖'}
+                <span className="bookmark-count">{story.saves_count || 0}</span>
+              </button>
+            </div>
+
             <hr className="full-story-divider" />
 
             {/* Headline sentence */}
             {headline && (
-              <p className="full-story-headline">{headline}</p>
+              <p 
+                className="full-story-headline" 
+                dangerouslySetInnerHTML={{ __html: headline }}
+              />
             )}
 
             {/* Body paragraphs */}
             <div className="full-story-body">
               {body.map((para, i) => (
-                <p key={i} className="full-story-para">{para}</p>
+                <p 
+                  key={i} 
+                  className="full-story-para"
+                  dangerouslySetInnerHTML={{ __html: para }}
+                />
               ))}
             </div>
 
@@ -1619,7 +2484,9 @@ function FullStoryPage() {
                 <h3 className="full-story-facts-title">Fast Facts</h3>
                 <ul className="full-story-facts-list">
                   {fastFacts.map((fact, i) => (
-                    <li key={i}>{fact}</li>
+                    <li key={i}>
+                      {renderWithBold(fact)}
+                    </li>
                   ))}
                 </ul>
               </div>

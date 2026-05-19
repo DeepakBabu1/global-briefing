@@ -354,6 +354,8 @@ class Story(BaseModel):
     source: Optional[str] = None
     published_at: Optional[datetime] = None
     fetched_at: Optional[datetime] = None
+    likes_count: Optional[int] = 0
+    saves_count: Optional[int] = 0
 
 class TopicInsight(BaseModel):
     category: str
@@ -392,7 +394,8 @@ async def get_stories(
         
         query = """
             SELECT story_id, title, url, content, summary, cover_image, 
-                   author, category, source, published_at, fetched_at
+                   author, category, source, published_at, fetched_at,
+                   likes_count, saves_count
             FROM stories
             WHERE 1=1
         """
@@ -465,6 +468,54 @@ async def get_stories(
         logger.error(f"Error fetching stories: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch stories")
 
+@app.get("/api/stories/top-liked")
+async def get_top_liked():
+    """Get top 3 most liked stories"""
+    conn = psycopg2.connect(
+        host=os.getenv('POSTGRES_HOST', 'postgres'),
+        database=os.getenv('POSTGRES_DB', 'postgres'),
+        user=os.getenv('POSTGRES_USER', 'postgres'),
+        password=os.getenv('POSTGRES_PASSWORD', 'postgres'),
+        port=os.getenv('POSTGRES_PORT', '5432')
+    )
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    cursor.execute("""
+        SELECT story_id, title, category, cover_image, 
+               likes_count, saves_count
+        FROM stories 
+        WHERE likes_count > 0
+        ORDER BY likes_count DESC 
+        LIMIT 3
+    """)
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return [dict(row) for row in rows]
+
+@app.get("/api/stories/top-saved")
+async def get_top_saved():
+    """Get top 3 most saved stories"""
+    conn = psycopg2.connect(
+        host=os.getenv('POSTGRES_HOST', 'postgres'),
+        database=os.getenv('POSTGRES_DB', 'postgres'),
+        user=os.getenv('POSTGRES_USER', 'postgres'),
+        password=os.getenv('POSTGRES_PASSWORD', 'postgres'),
+        port=os.getenv('POSTGRES_PORT', '5432')
+    )
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    cursor.execute("""
+        SELECT story_id, title, category, cover_image,
+               likes_count, saves_count
+        FROM stories 
+        WHERE saves_count > 0
+        ORDER BY saves_count DESC 
+        LIMIT 3
+    """)
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return [dict(row) for row in rows]
+
 @app.get("/api/stories/{story_id}", response_model=Story)
 async def get_story(story_id: str, db: psycopg2.extensions.connection = Depends(get_db)):
     """Get a specific story by ID"""
@@ -473,7 +524,8 @@ async def get_story(story_id: str, db: psycopg2.extensions.connection = Depends(
         cursor.execute(
             """
             SELECT story_id, title, url, content, summary, cover_image, 
-                   author, category, source, published_at, fetched_at
+                   author, category, source, published_at, fetched_at,
+                   likes_count, saves_count
             FROM stories WHERE story_id = %s
             """,
             (story_id,)
@@ -692,24 +744,41 @@ async def like_story(story_id: str, current_user: dict = Depends(get_current_use
         existing = cursor.fetchone()
         
         if existing:
-            # Unlike - remove the like
+            # Unlike - remove the like and decrement global count
             cursor.execute("""
                 DELETE FROM click_events 
                 WHERE user_id = %s AND story_id = %s AND event_type = 'like'
             """, (current_user['id'], story_id))
+            cursor.execute("""
+                UPDATE stories SET likes_count = likes_count - 1 WHERE story_id = %s
+            """, (story_id,))
             message = "Story unliked"
         else:
-            # Like - add the like
+            # Like - add the like and increment global count
             cursor.execute("""
                 INSERT INTO click_events (user_id, story_id, event_type, occurred_at)
                 VALUES (%s, %s, 'like', NOW())
             """, (current_user['id'], story_id))
+            cursor.execute("""
+                UPDATE stories SET likes_count = likes_count + 1 WHERE story_id = %s
+            """, (story_id,))
             message = "Story liked"
+        
+        # Get updated counts
+        cursor.execute("""
+            SELECT likes_count, saves_count FROM stories WHERE story_id = %s
+        """, (story_id,))
+        counts = cursor.fetchone()
         
         db.commit()
         cursor.close()
         
-        return {"message": message}
+        return {
+            "message": message,
+            "story_id": story_id,
+            "likes_count": counts['likes_count'],
+            "saves_count": counts['saves_count']
+        }
     
     except Exception as e:
         logger.error(f"Error liking story: {e}")
@@ -730,28 +799,112 @@ async def save_story(story_id: str, current_user: dict = Depends(get_current_use
         existing = cursor.fetchone()
         
         if existing:
-            # Unsave - remove the save
+            # Unsave - remove the save and decrement global count
             cursor.execute("""
                 DELETE FROM click_events 
                 WHERE user_id = %s AND story_id = %s AND event_type = 'save'
             """, (current_user['id'], story_id))
+            cursor.execute("""
+                UPDATE stories SET saves_count = saves_count - 1 WHERE story_id = %s
+            """, (story_id,))
             message = "Story unsaved"
         else:
-            # Save - add the save
+            # Save - add the save and increment global count
             cursor.execute("""
                 INSERT INTO click_events (user_id, story_id, event_type, occurred_at)
                 VALUES (%s, %s, 'save', NOW())
             """, (current_user['id'], story_id))
+            cursor.execute("""
+                UPDATE stories SET saves_count = saves_count + 1 WHERE story_id = %s
+            """, (story_id,))
             message = "Story saved"
+        
+        # Get updated counts
+        cursor.execute("""
+            SELECT likes_count, saves_count FROM stories WHERE story_id = %s
+        """, (story_id,))
+        counts = cursor.fetchone()
         
         db.commit()
         cursor.close()
         
-        return {"message": message}
+        return {
+            "message": message,
+            "story_id": story_id,
+            "likes_count": counts['likes_count'],
+            "saves_count": counts['saves_count']
+        }
     
     except Exception as e:
         logger.error(f"Error saving story: {e}")
         raise HTTPException(status_code=500, detail="Failed to save story")
+
+@app.get("/api/stories/{story_id}/counts")
+async def get_story_counts(story_id: str, db: psycopg2.extensions.connection = Depends(get_db)):
+    """Get current like and save counts for a story"""
+    try:
+        cursor = db.cursor(cursor_factory=RealDictCursor)
+        cursor.execute("""
+            SELECT likes_count, saves_count FROM stories WHERE story_id = %s
+        """, (story_id,))
+        counts = cursor.fetchone()
+        cursor.close()
+        
+        if not counts:
+            raise HTTPException(status_code=404, detail="Story not found")
+            
+        return {
+            "likes_count": counts['likes_count'],
+            "saves_count": counts['saves_count']
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching story counts: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch story counts")
+
+@app.get("/api/stories/top-liked")
+async def get_top_liked_stories(db: psycopg2.extensions.connection = Depends(get_db)):
+    """Get top 3 most liked stories today"""
+    try:
+        cursor = db.cursor(cursor_factory=RealDictCursor)
+        cursor.execute("""
+            SELECT story_id, title, category, likes_count, saves_count, source, published_at
+            FROM stories 
+            WHERE DATE(published_at) = CURRENT_DATE
+            ORDER BY likes_count DESC, published_at DESC
+            LIMIT 3
+        """)
+        stories = cursor.fetchall()
+        cursor.close()
+        
+        return [dict(story) for story in stories]
+    
+    except Exception as e:
+        logger.error(f"Error fetching top liked stories: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch top liked stories")
+
+@app.get("/api/stories/top-saved")
+async def get_top_saved_stories(db: psycopg2.extensions.connection = Depends(get_db)):
+    """Get top 3 most saved stories today"""
+    try:
+        cursor = db.cursor(cursor_factory=RealDictCursor)
+        cursor.execute("""
+            SELECT story_id, title, category, likes_count, saves_count, source, published_at
+            FROM stories 
+            WHERE DATE(published_at) = CURRENT_DATE
+            ORDER BY saves_count DESC, published_at DESC
+            LIMIT 3
+        """)
+        stories = cursor.fetchall()
+        cursor.close()
+        
+        return [dict(story) for story in stories]
+    
+    except Exception as e:
+        logger.error(f"Error fetching top saved stories: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch top saved stories")
 
 
 @app.get("/api/stats/summary")

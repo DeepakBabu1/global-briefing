@@ -44,6 +44,7 @@ services:
       - AIRFLOW__WEBSERVER__BASE_URL=http://localhost:8081 
       - AIRFLOW__LOGGING__REMOTE_LOGGING=False
       - GROQ_API_KEY=${GROQ_API_KEY}
+      - RESEND_API_KEY=${RESEND_API_KEY}
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
       - POSTGRES_DB=${POSTGRES_DB:-postgres}
@@ -74,6 +75,7 @@ services:
       - REDIS_URL=redis://redis:6379
       - JWT_SECRET=${JWT_SECRET}
       - GROQ_API_KEY=${GROQ_API_KEY}
+      - RESEND_API_KEY=${RESEND_API_KEY}
     ports:
       - "5000:5000"
     volumes:
