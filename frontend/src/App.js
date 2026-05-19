@@ -593,25 +593,43 @@ function HomePage() {
   const [storiesLoading, setStoriesLoading] = useState(true);
   const [userPreferences, setUserPreferences] = useState([]);
   
+  // Dynamic date for hero banner
+  const today = new Date();
+  const dayName = today.toLocaleDateString('en-US', { 
+    weekday: 'long' 
+  }).toUpperCase();
+  const fullDate = today.toLocaleDateString('en-US', { 
+    month: 'long', 
+    day: 'numeric', 
+    year: 'numeric' 
+  });
+  
   // useMemo must be called unconditionally at component top
   const displayedStories = useMemo(() => {
-    let result = stories  // start with ALL stories
-    
-    // Only filter by date if user selected one
-    if (selectedDate) {
-      result = result.filter(s => 
-        s.published_at && s.published_at.startsWith(selectedDate)
-      )
-    }
-    
-    // Only filter by category if not 'All'
+    let result = [...stories]  // start with ALL stories
+
+    // Step 1: Filter by category first
     if (selectedCategory && selectedCategory !== 'All') {
       result = result.filter(s =>
         s.category && 
-        s.category.toLowerCase() === selectedCategory.toLowerCase()
+        s.category.toLowerCase().trim() === 
+        selectedCategory.toLowerCase().trim()
       )
     }
-    
+
+    // Step 2: Only filter by date if user explicitly picked one
+    if (selectedDate) {
+      result = result.filter(s =>
+        s.published_at && 
+        s.published_at.toString().startsWith(selectedDate)
+      )
+    }
+
+    // Step 3: Sort by published_at newest first
+    result.sort((a, b) => 
+      new Date(b.published_at) - new Date(a.published_at)
+    )
+
     return result
   }, [stories, selectedDate, selectedCategory]);
 
@@ -746,6 +764,12 @@ function HomePage() {
 
   console.log('HomePage - User authenticated, rendering home page');
 
+  // Debug logging for category filter issues
+  console.log('Total stories loaded:', stories.length)
+  console.log('Selected category:', selectedCategory)
+  console.log('Categories in data:', [...new Set(stories.map(s => s.category))])
+  console.log('Filtered result:', displayedStories.length)
+
   return (
     <div className="home-page">
       <Navigation 
@@ -768,8 +792,8 @@ function HomePage() {
               <p className="hero-subtitle-blue">The Global Briefing delivers sharp, AI-curated news across 8 categories every morning.</p>
             </div>
             <div className="hero-right-blue">
-              <div className="hero-date-large">FRIDAY</div>
-              <div className="hero-date-small">May 9, 2026</div>
+              <div className="hero-date-large">{dayName}</div>
+              <div className="hero-date-small">{fullDate}</div>
             </div>
           </div>
         </div>
@@ -853,15 +877,15 @@ function HomePage() {
         )}
         
         {/* Featured Story - only show for All category and no search */}
-        {!storiesLoading && Array.isArray(stories) && stories.length > 0 && selectedCategory === 'All' && !searchQuery.trim() && (
-          <FeaturedStory story={stories[0]} onUpdateStory={handleUpdateStory} />
+        {!storiesLoading && Array.isArray(displayedStories) && displayedStories.length > 0 && selectedCategory === 'All' && !searchQuery.trim() && (
+          <FeaturedStory story={displayedStories[0]} onUpdateStory={handleUpdateStory} />
         )}
         
         {/* Regular Stories Grid */}
         <div className="stories-grid">
           {storiesLoading ? (
             <div className="loading-placeholder"><p>Loading stories...</p></div>
-          ) : !Array.isArray(stories) || stories.length === 0 ? (
+          ) : !Array.isArray(displayedStories) || displayedStories.length === 0 ? (
             <div className="no-stories-placeholder">
               <div className="empty-state-icon">📰</div>
               <h3 className="empty-state-title">
@@ -875,12 +899,9 @@ function HomePage() {
               </p>
             </div>
           ) : (
-            displayedStories
-              .map((story, index) => {
-                // Skip the first story if it's featured
-                const storyIndex = selectedCategory === 'All' && !searchQuery.trim() && index === 0 ? null : story;
-                return storyIndex && <StoryCard key={storyIndex.story_id} story={storyIndex} onUpdateStory={handleUpdateStory} />;
-              })
+            displayedStories.map((story) => (
+              <StoryCard key={story.story_id} story={story} onUpdateStory={handleUpdateStory} />
+            ))
           )}
         </div>
       </div>
@@ -1682,220 +1703,159 @@ function InsightsPage() {
       />
       
       <div className="insights-grid">
-        {/* Reading Streak - Prominent */}
-        <div className="insights-card streak-card">
-          <div className="streak-content">
-            <div className="streak-number">{insights.streak}</div>
-            <div className="streak-label">Reading Streak</div>
-            <div className="streak-sublabel">Days in a row</div>
-          </div>
-          <div className="streak-icon">{insights.streak > 0 ? '🔥' : '📖'}</div>
-        </div>
-
-        {/* Your Reading Interests */}
-        <div className="insights-card">
-          <div className="card-header">
-            <h3>Your Reading Interests</h3>
-            <p className="card-subtitle">Last 30 days</p>
-          </div>
-          <div className="topic-bars">
-            {insights.topicHeatmap?.map((topic, index) => {
-              const categoryColors = {
-                'Technology': '#3B82F6',
-                'Politics': '#EF4444', 
-                'Business': '#10B981',
-                'Sports': '#F59E0B',
-                'Health': '#8B5CF6',
-                'Science': '#06B6D4',
-                'World': '#F97316',
-                'Entertainment': '#EC4899'
-              };
-              const color = categoryColors[topic.topic] || '#6B7280';
-              
-              return (
-                <div key={index} className="topic-bar">
-                  <span className="topic-name">{topic.topic}</span>
-                  <div className="progress-track">
-                    <div 
-                      className="progress-fill" 
-                      style={{ width: `${Math.min(topic.percentage, 100)}%`, backgroundColor: color }}
-                    ></div>
-                  </div>
-                  <span className="topic-count">{topic.count} ({topic.percentage}%)</span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Most Read Today */}
-        <div className="insights-card">
-          <div className="card-header">
-            <h3>Most Read Today</h3>
-            <p className="card-subtitle">Top liked stories</p>
-          </div>
-          <div className="top-stories">
-            {topLiked.length > 0 ? (
-              topLiked.map((story, index) => (
-                <div 
-                  key={index} 
-                  className="top-story-item clickable"
-                  onClick={() => navigate(`/story/${story.story_id}`)}
-                  style={{
-                    cursor: 'pointer',
-                    padding: '10px 0',
-                    borderBottom: '1px solid #F3F4F6'
-                  }}
-                >
-                  <div className="story-info">
-                    <div className="story-title">{story.title.substring(0, 60)}...</div>
-                    <div className="story-meta">
-                      <span className="story-category">{story.category}</span>
-                      <span className="story-likes" style={{ fontWeight: '600', color: '#DC2626' }}>{story.likes_count}</span>
-                    </div>
-                  </div>
-                </div>
-              ))
-            ) : (
-              <div className="no-data">No stories liked today</div>
-            )}
-          </div>
-        </div>
-
-        {/* Most Saved Today */}
-        <div className="insights-card">
-          <div className="card-header">
-            <h3>Most Saved Today</h3>
-            <p className="card-subtitle">Top bookmarked stories</p>
-          </div>
-          <div className="top-stories">
-            {topSaved.length > 0 ? (
-              topSaved.map((story, index) => (
-                <div 
-                  key={index} 
-                  className="top-story-item clickable"
-                  onClick={() => navigate(`/story/${story.story_id}`)}
-                  style={{
-                    cursor: 'pointer',
-                    padding: '10px 0',
-                    borderBottom: '1px solid #F3F4F6'
-                  }}
-                >
-                  <div className="story-info">
-                    <div className="story-title">{story.title.substring(0, 60)}...</div>
-                    <div className="story-meta">
-                      <span className="story-category">{story.category}</span>
-                      <span className="story-saves" style={{ fontWeight: '600', color: '#059669' }}>{story.saves_count}</span>
-                    </div>
-                  </div>
-                </div>
-              ))
-            ) : (
-              <div className="no-data">No stories saved today</div>
-            )}
-          </div>
-        </div>
-
-        {/* Today's Coverage */}
-        <div className="insights-card">
-          <div className="card-header">
-            <h3>Today's Coverage</h3>
-            <p className="card-subtitle">Stories by category</p>
-          </div>
-          <div className="coverage-content">
-            <div className="coverage-summary">
-              Today's briefing covers <strong>{todayCoverage?.totalStories || 25}</strong> stories across <strong>{todayCoverage?.categories?.length || 6}</strong> categories
+        {/* Row 1: Most Read Today and Most Saved Today side by side */}
+        <div className="insights-row">
+          {/* Most Read Today */}
+          <div className="insights-card">
+            <div className="card-header">
+              <h3>Most Read Today</h3>
+              <p className="card-subtitle">Top liked stories</p>
             </div>
-            <div className="coverage-grid">
-              {todayCoverage?.categories?.map((cat, index) => {
-                const categoryColors = {
-                  'Technology': { bg: '#3B82F6', text: 'white' },
-                  'Politics': { bg: '#EF4444', text: 'white' },
-                  'Business': { bg: '#10B981', text: 'white' },
-                  'Sports': { bg: '#F59E0B', text: 'white' },
-                  'Health': { bg: '#8B5CF6', text: 'white' },
-                  'Science': { bg: '#06B6D4', text: 'white' },
-                  'World': { bg: '#F97316', text: 'white' },
-                  'Entertainment': { bg: '#EC4899', text: 'white' }
-                };
-                const colors = categoryColors[cat.name] || { bg: '#6B7280', text: 'white' };
-                
-                return (
+            <div className="top-stories">
+              {topLiked.length > 0 ? (
+                topLiked.map((story, index) => (
                   <div 
                     key={index} 
-                    className="coverage-category clickable"
-                    onClick={() => navigate(`/?category=${cat.name}`)}
+                    className="top-story-item clickable"
+                    onClick={() => navigate(`/story/${story.story_id}`)}
                     style={{
                       cursor: 'pointer',
-                      background: colors.bg,
-                      color: colors.text,
-                      padding: '8px 16px',
-                      borderRadius: '8px',
-                      fontWeight: '600',
-                      fontSize: '14px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                      transition: 'all 0.15s ease',
-                      border: '1px solid transparent'
+                      padding: '10px 0',
+                      borderBottom: '1px solid #F3F4F6'
                     }}
-                    onMouseEnter={e => e.currentTarget.style.transform = 'translateY(-1px)'}
-                    onMouseLeave={e => e.currentTarget.style.transform = 'translateY(0)'}
                   >
-                    {cat.name} <span style={{
-                      background: 'rgba(0,0,0,0.1)',
-                      borderRadius: '4px',
-                      padding: '1px 6px',
-                      fontSize: '12px'
-                    }}>{cat.count}</span>
+                    <div className="story-info">
+                      <div className="story-title">{story.title.substring(0, 60)}...</div>
+                      <div className="story-meta">
+                        <span className="story-category">{story.category}</span>
+                        <span className="story-likes" style={{ fontWeight: '600', color: '#DC2626' }}>{story.likes_count}</span>
+                      </div>
+                    </div>
                   </div>
-                );
-              })}
+                ))
+              ) : (
+                <div className="no-data">No stories liked today</div>
+              )}
+            </div>
+          </div>
+
+          {/* Most Saved Today */}
+          <div className="insights-card">
+            <div className="card-header">
+              <h3>Most Saved Today</h3>
+              <p className="card-subtitle">Top bookmarked stories</p>
+            </div>
+            <div className="top-stories">
+              {topSaved.length > 0 ? (
+                topSaved.map((story, index) => (
+                  <div 
+                    key={index} 
+                    className="top-story-item clickable"
+                    onClick={() => navigate(`/story/${story.story_id}`)}
+                    style={{
+                      cursor: 'pointer',
+                      padding: '10px 0',
+                      borderBottom: '1px solid #F3F4F6'
+                    }}
+                  >
+                    <div className="story-info">
+                      <div className="story-title">{story.title.substring(0, 60)}...</div>
+                      <div className="story-meta">
+                        <span className="story-category">{story.category}</span>
+                        <span className="story-saves" style={{ fontWeight: '600', color: '#059669' }}>{story.saves_count}</span>
+                      </div>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="no-data">No stories saved today</div>
+              )}
             </div>
           </div>
         </div>
 
-        {/* Stories Read */}
-        <div className="insights-card">
-          <div className="card-header">
-            <h3>Stories Read</h3>
-            <p className="card-subtitle">Your progress today</p>
-          </div>
-          <div className="stories-read-content">
-            <div className="read-progress">
-              <div className="progress-summary">
-                You've read <strong>{storiesRead.length}</strong> of <strong>{todayCoverage?.totalStories || 25}</strong> stories
+        {/* Row 2: Today's Coverage and Blindspot Alert side by side */}
+        <div className="insights-row">
+          {/* Today's Coverage */}
+          <div className="insights-card">
+            <div className="card-header">
+              <h3>Today's Coverage</h3>
+              <p className="card-subtitle">Stories by category</p>
+            </div>
+            <div className="coverage-content">
+              <div className="coverage-summary">
+                Today's briefing covers <strong>{todayCoverage?.totalStories || 25}</strong> stories across <strong>{todayCoverage?.categories?.length || 6}</strong> categories
               </div>
-              <div className="progress-bar">
-                <div 
-                  className="progress-fill-read" 
-                  style={{ width: `${Math.min((storiesRead.length / (todayCoverage?.totalStories || 25)) * 100, 100)}%` }}
-                ></div>
+              <div className="coverage-list">
+                {todayCoverage?.categories?.map((cat, index) => {
+                  const categoryColors = {
+                    'Technology': '#3B82F6',
+                    'Politics': '#EF4444',
+                    'Business': '#10B981',
+                    'Sports': '#F59E0B',
+                    'Health': '#8B5CF6',
+                    'Science': '#06B6D4',
+                    'World': '#F97316',
+                    'Entertainment': '#EC4899'
+                  };
+                  const dotColor = categoryColors[cat.name] || '#6B7280';
+                  
+                  return (
+                    <div 
+                      key={index} 
+                      className="coverage-row clickable"
+                      onClick={() => navigate(`/?category=${cat.name}`)}
+                      style={{
+                        cursor: 'pointer',
+                        fontSize: '14px',
+                        padding: '8px 0',
+                        borderBottom: '1px solid #F3F4F6',
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        transition: 'all 0.15s ease'
+                      }}
+                      onMouseEnter={e => e.currentTarget.style.backgroundColor = '#F9FAFB'}
+                      onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{
+                          width: '8px',
+                          height: '8px',
+                          borderRadius: '50%',
+                          backgroundColor: dotColor
+                        }}></span>
+                        <span>{cat.name}</span>
+                      </div>
+                      <span style={{ color: '#6B7280', fontWeight: '500' }}>{cat.count}</span>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </div>
-        </div>
 
-        {/* Blindspot Alert */}
-        <div className="insights-card">
-          <div className="card-header">
-            <h3>Blindspot Alert</h3>
-            <p className="card-subtitle">Categories to explore</p>
-          </div>
-          <div className="blindspot-content">
-            {insights.blindspotCategories?.length > 0 ? (
-              <div className="blindspot-pills">
-                {insights.blindspotCategories.map((category, index) => (
-                  <span key={index} className="blindspot-pill">
-                    {category.charAt(0).toUpperCase() + category.slice(1)}
-                  </span>
-                ))}
-              </div>
-            ) : (
-              <div className="no-blindspot">
-                Great job! You're reading a diverse range of topics.
-              </div>
-            )}
+          {/* Blindspot Alert */}
+          <div className="insights-card">
+            <div className="card-header">
+              <h3>Blindspot Alert</h3>
+              <p className="card-subtitle">Categories to explore</p>
+            </div>
+            <div className="blindspot-content">
+              {insights.blindspotCategories?.length > 0 ? (
+                <div className="blindspot-pills">
+                  {insights.blindspotCategories.map((category, index) => (
+                    <span key={index} className="blindspot-pill">
+                      {category.charAt(0).toUpperCase() + category.slice(1)}
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <div className="no-blindspot">
+                  Great job! You're reading a diverse range of topics.
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
